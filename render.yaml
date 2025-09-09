@@ -16,7 +16,7 @@ services:
         value: "*"
 
   # Frontend (Vite static build)
-  - type: static
+  - type: static_site
     name: hunbook-frontend
     autoDeploy: true
     buildCommand: "cd web && npm ci && npm run build"
@@ -27,3 +27,7 @@ services:
           name: hunbook-api
           type: web
           property: url
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
