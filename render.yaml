@@ -20,9 +20,10 @@ services:
   - type: web
     name: hunbook-frontend
     runtime: static
+    rootDir: web
     autoDeploy: true
-    buildCommand: "cd web && npm ci && npm run build"
-    staticPublishPath: "web/dist"
+    buildCommand: "npm ci && npm run build"
+    staticPublishPath: "dist"
     envVars:
       - key: VITE_API_BASE
         fromService:
