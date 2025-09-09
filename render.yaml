@@ -2,7 +2,8 @@ services:
   # Backend API (FastAPI via Dockerfile)
   - type: web
     name: hunbook-api
-    env: docker
+    runtime: docker
+    plan: free
     autoDeploy: true
     healthCheckPath: /healthz
     envVars:
@@ -16,8 +17,10 @@ services:
         value: "*"
 
   # Frontend (Vite static build)
-  - type: static_site
+  - type: web
     name: hunbook-frontend
+    runtime: static
+    plan: free
     autoDeploy: true
     buildCommand: "cd web && npm ci && npm run build"
     staticPublishPath: "web/dist"
@@ -26,7 +29,7 @@ services:
         fromService:
           name: hunbook-api
           type: web
-          property: url
+          envVarKey: RENDER_EXTERNAL_URL
     routes:
       - type: rewrite
         source: /*
