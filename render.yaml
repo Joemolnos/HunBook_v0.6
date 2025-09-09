@@ -1,0 +1,29 @@
+services:
+  # Backend API (FastAPI via Dockerfile)
+  - type: web
+    name: hunbook-api
+    env: docker
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: REQUIRE_BYOK
+        value: "false"
+      - key: QUOTA_PER_DAY
+        value: "3"
+      - key: FRONTEND_ORIGIN
+        value: "*"
+
+  # Frontend (Vite static build)
+  - type: static
+    name: hunbook-frontend
+    autoDeploy: true
+    buildCommand: "cd web && npm ci && npm run build"
+    staticPublishPath: "web/dist"
+    envVars:
+      - key: VITE_API_BASE
+        fromService:
+          name: hunbook-api
+          type: web
+          property: url

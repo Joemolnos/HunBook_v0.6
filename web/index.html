@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="hu" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#312e81" />
+    <title>Groqbook</title>
+    <link rel="icon" href="/favicon.ico" />
+  </head>
+  <body class="bg-zinc-950 text-zinc-100">
+    <div id="app" class="min-h-screen">
+      <header class="border-b border-zinc-800 sticky top-0 z-40 bg-zinc-950/80 backdrop-blur">
+        <div class="w-full pl-6 pr-4 py-5 flex items-center gap-4">
+          <div class="flex items-center gap-3">
+            <div id="logo" class="w-48 h-14 bg-zinc-800/60 rounded flex items-center justify-center text-xs text-zinc-400">
+              Logo helye (160x40)
+            </div>
+            <h1 class="text-lg font-semibold tracking-tight">HunBook az ingyen használható AI-könyvíró</h1>
+          </div>
+          <div class="ml-auto flex items-center gap-2">
+            <button id="byokOpen" class="header-btn">API-kulcs (BYOK)</button>
+            <button id="modeToggle" class="header-btn">
+              Haladó mód
+            </button>
+            <button id="themeToggle" class="header-btn">
+              ☾ Sötét
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main class="w-full pl-6 pr-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <section class="lg:col-span-2 space-y-6">
+          <!-- Forms -->
+          <div class="bg-zinc-900/60 border border-zinc-800 rounded-lg p-4">
+            <div class="space-y-4">
+              <div>
+                <label for="subject" class="block text-sm text-zinc-300">A Könyv témája</label>
+                <textarea id="subject" rows="3" class="mt-1 w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="Írd be a témát..."></textarea>
+              </div>
+
+              <div id="simpleControls" class="flex items-center gap-3">
+                <button id="generateBtn" class="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">Generálás</button>
+                <button id="stopBtn" class="px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-sm" disabled>Leállítás</button>
+              </div>
+
+              <!-- Simple mode templates -->
+              <div class="space-y-2">
+                <div class="text-xs text-zinc-400">Használd valamelyik sablont:</div>
+                <div id="simpleTemplates" class="flex flex-wrap gap-2">
+                  <button class="pill" data-template="simple" data-subject="A macskák élete">A macskák élete</button>
+                  <button class="pill" data-template="simple" data-subject="Magyar népmesék modern feldolgozásban">Népmesék modern feldolgozásban</button>
+                  <button class="pill" data-template="simple" data-subject="Egészséges életmód alapjai">Egészséges életmód</button>
+                </div>
+              </div>
+
+              <!-- Extra instructions (optional) -->
+              <div class="bg-zinc-900/40 border border-zinc-800 rounded-md p-3">
+                <div class="flex items-center justify-between gap-2">
+                  <div class="text-sm text-zinc-300">További utasítások (opcionális)</div>
+                  <button id="extraToggle" class="pill">Megnyitás</button>
+                </div>
+                <div id="extraPanel" class="mt-3 hidden grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label class="block text-xs mb-1 text-zinc-400">Kötelező tartalom</label>
+                    <textarea id="instrRequired" rows="3" class="w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="Feltétlenül szerepeljenek például esettanulmányok, hivatkozások, stb."></textarea>
+                  </div>
+                  <div>
+                    <label class="block text-xs mb-1 text-zinc-400">Milyen kérdésekre keressen válaszokat a könyv?</label>
+                    <textarea id="instrQuestions" rows="3" class="w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="Milyen kérdésekre keressen választ a könyv?"></textarea>
+                  </div>
+                  <div>
+                    <label class="block text-xs mb-1 text-zinc-400">Mi a célja a könyvnek?</label>
+                    <textarea id="instrGoal" rows="3" class="w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="Mi a könyv célja, kiknek szól?"></textarea>
+                  </div>
+                </div>
+                <div class="mt-2 text-xs text-zinc-500">Hagyd üresen, ha nem szeretnél plusz megkötést. Nem Kötelező mindhárom mező kitöltése.</div>
+              </div>
+
+              <div id="advancedPanel" class="hidden border-t border-zinc-800 pt-4 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label class="block text-sm mb-1 text-zinc-300">Modell</label>
+                    <div class="flex gap-2">
+                      <button data-model="openai/gpt-oss-20b" class="pill pill-active">Gyorsabb</button>
+                      <button data-model="openai/gpt-oss-120b" class="pill">Minőségibb</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-sm mb-1 text-zinc-300">Kreativitás</label>
+                    <input id="temperature" type="range" min="0" max="1" step="0.05" value="0.3" class="range">
+                    <div class="text-xs text-zinc-400"><span id="temperatureVal">0.30</span></div>
+                  </div>
+                  <div>
+                    <label class="block text-sm mb-1 text-zinc-300">Választékos szóhasználat</label>
+                    <input id="topP" type="range" min="0.1" max="1" step="0.05" value="1" class="range">
+                    <div class="text-xs text-zinc-400"><span id="topPVal">1.00</span></div>
+                  </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label class="block text-sm mb-1 text-zinc-300">Cél hossz/fejezet (Szó)</label>
+                    <input id="targetLength" type="range" min="300" max="2000" step="100" value="1200" class="range">
+                    <div class="text-xs text-zinc-400"><span id="targetLengthVal">1200</span> Szó</div>
+                  </div>
+                  <div>
+                    <label class="block text-sm mb-1 text-zinc-300">Stílus</label>
+                    <div class="flex flex-wrap gap-2">
+                      <button data-style="akadémikus" class="pill pill-active">Akadémikus</button>
+                      <button data-style="közérthető" class="pill">Közérthető</button>
+                      <button data-style="narratív" class="pill">Narratív</button>
+                      <button data-style="technikai" class="pill">Technikai</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="block text-sm mb-1 text-zinc-300">Olvasói szint</label>
+                    <div class="flex flex-wrap gap-2">
+                      <button data-level="általános" class="pill pill-active">Általános</button>
+                      <button data-level="közepes" class="pill">Közép</button>
+                      <button data-level="egyetemi" class="pill">Egyetemi</button>
+                      <button data-level="szakértő" class="pill">Szakértő</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Advanced mode templates with recommended settings -->
+                <div class="border-t border-zinc-800 pt-4 space-y-2">
+                  <div class="text-xs text-zinc-400">Próbáld ki valamelyik sablont:</div>
+                  <div id="advancedTemplates" class="flex flex-wrap gap-2">
+                    <button class="pill" data-template="advanced" data-subject="Tech kézikönyv: Python kezdőknek" data-style="technikai" data-level="közép" data-temp="0.2" data-top-p="0.9" data-target="900">Python kézikönyv</button>
+                    <button class="pill" data-template="advanced" data-subject="Narratív életrajz: Egy feltaláló útja" data-style="narratív" data-level="általános" data-temp="0.7" data-top-p="1.0" data-target="1200">Narratív életrajz: Neumann János</button>
+                    <button class="pill" data-template="advanced" data-subject="Akadémiai tanulmány: Klímaváltozás hatásai" data-style="akadémikus" data-level="egyetemi" data-temp="0.3" data-top-p="0.85" data-target="1100">Akadémiai tanulmány Klímaváltozás hatásairól</button>
+                    <button class="pill" data-template="advanced" data-subject="Ismeretterjesztő: AI a mindennapokban" data-style="közérthető" data-level="általános" data-temp="0.5" data-top-p="0.95" data-target="1000">AI a mindennapokban</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Progress + Structure (titles only during generation) -->
+          <div id="progressOuter" class="hidden h-2 bg-zinc-900 border border-zinc-800 rounded overflow-hidden mb-3">
+            <div id="progressInner" class="h-full bg-indigo-600" style="width:0%"></div>
+          </div>
+          <div id="structure" class="space-y-3"></div>
+        </section>
+
+        <aside class="lg:col-span-1">
+          <div class="bg-zinc-900/60 border border-zinc-800 rounded-lg p-4 space-y-4">
+            <h2 class="text-sm font-medium text-zinc-300">Statisztikák</h2>
+            <div id="stats" class="text-sm text-zinc-400 space-y-1">
+              <div>Modell: <span id="statModel">-</span></div>
+              <div>Össz. idő: <span id="statTime">0.00s</span></div>
+              <div>Kimeneti sebesség: <span id="statSpeed">0.00 szó/s</span></div>
+              <div>Becsült szószám: <span id="statTokens">0</span></div>
+            </div>
+            <!-- Daily quota -->
+            <div id="quotaCard" class="mt-4 rounded-md border border-zinc-800 bg-zinc-900/50 p-3 space-y-2">
+              <div class="flex items-center justify-between">
+                <div class="text-sm text-zinc-300">Napi kvóta</div>
+                <div id="quotaLabel" class="text-xs text-zinc-400">-/-</div>
+              </div>
+              <div class="h-2 bg-zinc-900 border border-zinc-800 rounded overflow-hidden">
+                <div id="quotaBar" class="h-full bg-indigo-600" style="width:0%"></div>
+              </div>
+              <div class="text-[11px] leading-snug text-zinc-500">
+                A HunBook ingyenes. Annak érdekében, hogy mások is használhassák, napi 3 könyv generálását engedélyezzük felhasználónként. A megszakított próbálkozások is beleszámítanak.
+              </div>
+            </div>
+            <div class="pt-2 border-t border-zinc-800">
+              <button id="downloadTxt" class="w-full px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-sm">Letöltés TXT</button>
+              <button id="downloadPdf" class="w-full mt-2 px-4 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-sm">Letöltés PDF</button>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="w-full pl-6 pr-4 py-8 text-xs text-zinc-500">
+        <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+          <div>&copy; HunBook-2025</div>
+          <div class="flex items-center gap-3">
+            <button id="openTerms" class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2">Felhasználási feltételek</button>
+            <button id="openImpressum" class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2">Impresszum</button>
+            <button id="openContact" class="text-zinc-400 hover:text-zinc-200 underline underline-offset-2">Kapcsolat</button>
+          </div>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Toast/Notification -->
+    <div id="notify" class="fixed bottom-4 right-4 z-50 hidden">
+      <div id="notifyInner" class="px-4 py-3 rounded-md border shadow-lg bg-zinc-900/90 border-zinc-800 text-zinc-200">
+        <span id="notifyText"></span>
+      </div>
+    </div>
+
+    <!-- BYOK Modal -->
+    <div id="byokOverlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden"></div>
+    <div id="byokModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
+      <div class="w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl">
+        <div class="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+          <h3 class="text-sm font-medium text-zinc-200">Használd a saját Groq API-kulcsodat (BYOK)</h3>
+          <button id="byokClose" class="px-2 py-1 text-zinc-400 hover:text-zinc-200">✕</button>
+        </div>
+        <div class="p-4 space-y-3 text-sm">
+          <div class="text-zinc-300">Add meg az API-kulcsodat. A kulcsot csak a böngésződ tárolja(de te is mentsd el).</div>
+          <div>
+            <label class="block text-xs mb-1 text-zinc-400">Groq API-kulcs</label>
+            <input id="byokInput" type="password" placeholder="gsk_..." class="w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+            <div class="mt-2 flex items-center gap-3">
+              <label class="flex items-center gap-2 text-xs text-zinc-400"><input id="byokShow" type="checkbox" class="accent-indigo-600" />Mutasd a kulcsot</label>
+              <label class="flex items-center gap-2 text-xs text-zinc-400"><input id="byokRemember" type="checkbox" class="accent-indigo-600" />Emlékezz erre az eszközön</label>
+            </div>
+          </div>
+          <details class="rounded-md border border-zinc-800 bg-zinc-950/50 p-3">
+            <summary class="cursor-pointer text-zinc-300">Hogyan szerzek API-kulcsot?</summary>
+            <ol class="list-decimal ml-5 mt-2 text-zinc-400 space-y-1">
+              <li>Látogasd meg a <a class="text-indigo-400 underline" href="https://console.groq.com/keys" target="_blank" rel="noreferrer">Groq Console / API Keys</a> oldalt.</li>
+              <li>Hozz létre új kulcsot, és másold ki (formátum: <code>gsk_...</code>).</li>
+              <li>Illeszd be ide, majd kattints a Mentés gombra.</li>
+            </ol>
+          </details>
+          <div class="flex items-center justify-between">
+            <button id="byokClear" class="px-3 py-2 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-sm">Kulcs törlése</button>
+            <div class="flex items-center gap-2">
+              <span id="byokStatus" class="text-xs text-zinc-400">Nincs kulcs</span>
+              <button id="byokSave" class="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">Mentés</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Terms (Felhasználási feltételek) Modal -->
+    <div id="termsOverlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden"></div>
+    <div id="termsModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
+      <div class="w-full max-w-2xl bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl">
+        <div class="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+          <h3 class="text-sm font-medium text-zinc-200">Felhasználási feltételek</h3>
+          <button id="termsClose" class="px-2 py-1 text-zinc-400 hover:text-zinc-200">✕</button>
+        </div>
+        <div class="p-4 space-y-3 text-sm text-zinc-300">
+          <ul class="list-disc ml-5 space-y-1 text-zinc-400">
+            <li>A szolgáltatás „ahogy van” alapon, garancia nélkül érhető el, díjmentesen.</li>
+            <li>Az AI által generált tartalom pontatlanságokat tartalmazhat; ellenőrzés nélkül nem javasolt publikálni.</li>
+            <li>Te felelsz a bevitt témák és utasítások jogtisztaságáért, valamint a kimenet felhasználásáért.</li>
+            <li>Visszaélés- és túlterhelés-védelem miatt napi kvótát alkalmazunk.</li>
+            <li>SOHA NE ADJ MEG ÉRZÉKENY ADATOKAT: BANKI, SZEMÉLYES, STB..</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Impresszum Modal -->
+    <div id="impressumOverlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden"></div>
+    <div id="impressumModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
+      <div class="w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl">
+        <div class="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+          <h3 class="text-sm font-medium text-zinc-200">Impresszum</h3>
+          <button id="impressumClose" class="px-2 py-1 text-zinc-400 hover:text-zinc-200">✕</button>
+        </div>
+        <div class="p-4 space-y-3 text-sm text-zinc-300">
+          <p>Egyéni, ingyenes webalkalmazás. Nem kapcsolódik céghez.</p>
+          <p>Kapcsolat: <a href="mailto:joe.molnos@gmail.com" class="text-indigo-400 underline">joe.molnos@gmail.com</a></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Kapcsolat Modal -->
+    <div id="contactOverlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden"></div>
+    <div id="contactModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
+      <div class="w-full max-w-xl bg-zinc-900 border border-zinc-800 rounded-lg shadow-xl">
+        <div class="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
+          <h3 class="text-sm font-medium text-zinc-200">Kapcsolat</h3>
+          <button id="contactClose" class="px-2 py-1 text-zinc-400 hover:text-zinc-200">✕</button>
+        </div>
+        <div class="p-4 space-y-3 text-sm">
+          <div class="text-zinc-300">Írj nekünk. A küldés a levelező kliensedet nyitja meg.</div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs mb-1 text-zinc-400">Neved (opcionális)</label>
+              <input id="contactName" type="text" class="w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+            </div>
+            <div>
+              <label class="block text-xs mb-1 text-zinc-400">Email címed (opcionális)</label>
+              <input id="contactEmail" type="email" class="w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs mb-1 text-zinc-400">Üzenet</label>
+            <textarea id="contactMessage" rows="5" class="w-full rounded-md bg-zinc-950 border border-zinc-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="Írd le röviden, miben segíthetünk..."></textarea>
+          </div>
+          <div class="flex items-center justify-between">
+            <div class="text-xs text-zinc-500">Címzett: <a href="mailto:joe.molnos@gmail.com" class="text-indigo-400 underline">joe.molnos@gmail.com</a></div>
+            <button id="contactSubmit" class="px-4 py-2 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium">Megnyitás levelezőben</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+.prose :where(h1,h2,h3,h4){
+  color: rgb(244 244 245);
+}
+
+.pill {
+  @apply px-3 py-1.5 rounded-full text-sm bg-zinc-800 text-zinc-200 hover:bg-zinc-700 border border-zinc-700;
+}
+.pill-active {
+  @apply bg-indigo-600 border-indigo-500 text-white;
+}
+
+.range {
+  @apply w-full accent-indigo-600;
+}
+
+/* Header buttons sized to taller header */
+.header-btn {
+  @apply h-12 px-4 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-sm;
+}
+
+/* Scrollbars */
+*::-webkit-scrollbar { height: 10px; width: 10px; }
+*::-webkit-scrollbar-thumb { background-color: #3f3f46; border-radius: 8px; }
+*::-webkit-scrollbar-track { background-color: #18181b; }
+
+/* Disabled state for download buttons */
+#downloadTxt:disabled,
+#downloadPdf:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: not-allowed;
+}
