@@ -20,7 +20,6 @@ services:
   - type: web
     name: hunbook-frontend
     runtime: static
-    plan: free
     autoDeploy: true
     buildCommand: "cd web && npm ci && npm run build"
     staticPublishPath: "web/dist"
