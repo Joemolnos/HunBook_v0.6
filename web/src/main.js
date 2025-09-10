@@ -95,6 +95,21 @@ let totalSections = 0;
 let completedSections = 0;
 const sectionStatusEls = new Map(); // title -> {container, statusEl, spinnerEl}
 
+function setSectionWait(title, seconds, message) {
+  ensureSectionContainer(title);
+  const refs = sectionStatusEls.get(title);
+  if (!refs) return;
+  const { statusEl, spinnerEl } = refs;
+  spinnerEl.classList.remove('hidden');
+  spinnerEl.classList.add('animate-spin');
+  const s = Number(seconds || 0).toFixed(1);
+  statusEl.textContent = `Várakozás ${s}s (limit)`;
+  statusEl.className = 'status-text text-xs text-yellow-400';
+  if (message && typeof message === 'string' && message.toLowerCase().includes('429')) {
+    showNotify('Átmeneti limit. Rövid várakozás…', 'warning', 2000);
+  }
+}
+
 function updateQuotaUI(perDay, remaining) {
   if (!quotaLabel || !quotaBar) return;
   const pd = Number(perDay) || 3;
@@ -512,6 +527,8 @@ async function generate() {
             sectionBuffers.set(ev.title, curr + ev.delta);
           } else if (ev.type === 'stats') {
             updateStatsFromEvent(ev);
+          } else if (ev.type === 'rate_limit_wait') {
+            setSectionWait(ev.title, ev.wait, ev.message);
           } else if (ev.type === 'section_end') {
             setSectionStatus(ev.title, 'done');
             completedSections += 1;

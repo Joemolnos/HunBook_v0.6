@@ -1,6 +1,9 @@
 from __future__ import annotations
 from typing import Any, Dict, Iterator, Tuple, Callable, Optional
 import json
+import time
+import logging
+import os
 
 from config import groq_client
 from stats import GenerationStatistics
@@ -13,6 +16,9 @@ SYSTEM_STRUCTURE = (
     "Avoid unrelated tangents, duplication across sections, and redundant scope. Maintain consistent terminology throughout. "
     "Do not include any introduction/foreword/author's note/summary unless explicitly requested."
 )
+
+logger = logging.getLogger(__name__)
+SECTION_PACING_S = float(os.getenv("SECTION_PACING_S", "0"))  # optional pacing between sections
 
 
 def _language_instruction(language: str) -> str:
@@ -136,6 +142,11 @@ def _refine_structure_for_coherence(subject: str, extra_txt: str, draft: Dict[st
         + "DRAFT OUTLINE (JSON):\n" + json.dumps(draft, ensure_ascii=False)
     )
     c = client or groq_client
+    # Prefer a bounded timeout to avoid indefinite stalls
+    try:
+        c = c.with_options(timeout=60)
+    except Exception:
+        pass
     completion = c.chat.completions.create(
         model=params.model,
         messages=[{"role": "system", "content": editor_system}, {"role": "user", "content": user_text}],
@@ -181,28 +192,68 @@ def generate_book_structure_service(subject: str, params: StructureParams, clien
 
     # Try strict JSON mode first; some models may return 400 json_validate_failed.
     client = client or groq_client
+    # Prefer a bounded timeout to avoid indefinite stalls
     try:
-        completion = client.chat.completions.create(
-            model=params.model,
-            messages=messages,
-            temperature=params.temperature,
-            max_tokens=params.max_tokens,
-            top_p=params.top_p,
-            stream=False,
-            response_format={"type": "json_object"},
-            stop=None,
-        )
+        client = client.with_options(timeout=60)
     except Exception:
-        # Fallback: retry without JSON enforcement; we'll parse the output ourselves.
-        completion = client.chat.completions.create(
-            model=params.model,
-            messages=messages,
-            temperature=params.temperature,
-            max_tokens=params.max_tokens,
-            top_p=params.top_p,
-            stream=False,
-            stop=None,
-        )
+        pass
+    def _should_retry(err: Exception) -> bool:
+        msg = str(err)
+        low = msg.lower()
+        return ("429" in msg) or ("rate limit" in low) or ("timeout" in low) or ("temporarily unavailable" in low)
+
+    def _retry_delay(attempt: int, err: Exception) -> float:
+        # Exponential backoff with jitter
+        base = min(2 ** attempt, 8)  # 1,2,4,8
+        return base + (0.5 * (attempt + 1))
+
+    # First try strict JSON response format, with retries on 429/timeout
+    last_err: Optional[Exception] = None
+    for attempt in range(4):
+        try:
+            completion = client.chat.completions.create(
+                model=params.model,
+                messages=messages,
+                temperature=params.temperature,
+                max_tokens=params.max_tokens,
+                top_p=params.top_p,
+                stream=False,
+                response_format={"type": "json_object"},
+                stop=None,
+            )
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            if not _should_retry(e) or attempt == 3:
+                break
+            wait_s = _retry_delay(attempt, e)
+            logger.warning("Structure call rate-limited/timeout, retrying in %.1fs (attempt %d)", wait_s, attempt + 1)
+            time.sleep(wait_s)
+    if last_err is not None and 'completion' not in locals():
+        # Fallback without JSON enforcement (also with retries)
+        for attempt in range(4):
+            try:
+                completion = client.chat.completions.create(
+                    model=params.model,
+                    messages=messages,
+                    temperature=params.temperature,
+                    max_tokens=params.max_tokens,
+                    top_p=params.top_p,
+                    stream=False,
+                    stop=None,
+                )
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if not _should_retry(e) or attempt == 3:
+                    break
+                wait_s = _retry_delay(attempt, e)
+                logger.warning("Structure fallback call rate-limited/timeout, retrying in %.1fs (attempt %d)", wait_s, attempt + 1)
+                time.sleep(wait_s)
+    if last_err is not None and 'completion' not in locals():
+        raise last_err
 
     usage = completion.usage
     statistics = GenerationStatistics(
@@ -310,15 +361,45 @@ def iter_sections_stream(
         yield {"type": "section_start", "title": title}
 
         c = client or groq_client
-        stream = c.chat.completions.create(
-            model=params.model,
-            messages=messages,
-            temperature=params.temperature,
-            max_tokens=params.max_tokens,
-            top_p=params.top_p,
-            stream=True,
-            stop=None,
-        )
+        try:
+            c = c.with_options(timeout=90)
+        except Exception:
+            pass
+
+        # Start stream with retries for 429/timeout
+        last_err: Optional[Exception] = None
+        stream = None
+        for attempt in range(4):
+            if is_cancelled and is_cancelled():
+                return
+            try:
+                stream = c.chat.completions.create(
+                    model=params.model,
+                    messages=messages,
+                    temperature=params.temperature,
+                    max_tokens=params.max_tokens,
+                    top_p=params.top_p,
+                    stream=True,
+                    stop=None,
+                )
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if not ("429" in str(e) or "rate limit" in str(e).lower() or "timeout" in str(e).lower()) or attempt == 3:
+                    break
+                wait_s = min(60, (2 ** attempt) + 1.0)
+                # Surface wait info to client so UI can reflect backoff status
+                yield {"type": "rate_limit_wait", "title": title, "wait": round(wait_s, 1), "message": str(e)}
+                logger.warning("Section '%s' start hit rate limit/timeout, waiting %.1fs before retry (attempt %d)", title, wait_s, attempt + 1)
+                # Backoff while still honoring cancellation
+                end = time.time() + wait_s
+                while time.time() < end:
+                    if is_cancelled and is_cancelled():
+                        return
+                    time.sleep(0.1)
+        if last_err is not None and stream is None:
+            raise last_err
 
         for chunk in stream:
             # Cancellation in-flight
@@ -358,6 +439,14 @@ def iter_sections_stream(
     for idx, item in enumerate(outline):
         if is_cancelled and is_cancelled():
             break
+        # Optional pacing to avoid bursting into rate limits
+        if idx > 0 and SECTION_PACING_S > 0:
+            yield {"type": "rate_limit_wait", "title": item.get("title", ""), "wait": round(SECTION_PACING_S, 2), "message": "pacing"}
+            end = time.time() + SECTION_PACING_S
+            while time.time() < end:
+                if is_cancelled and is_cancelled():
+                    break
+                time.sleep(0.05)
         yield from stream_one(idx, item)
 
     if is_cancelled and is_cancelled():
