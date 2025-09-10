@@ -65,8 +65,13 @@ def generate_structure(req: StructureRequest, request: Request) -> StructureResp
         raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         msg = str(e)
-        is_rate_limited = "429" in msg or "rate limit" in msg.lower()
-        code = 429 if is_rate_limited else 500
+        low = msg.lower()
+        if "401" in msg or "invalid api key" in low:
+            code = 401
+        elif "429" in msg or "rate limit" in low:
+            code = 429
+        else:
+            code = 500
         raise HTTPException(status_code=code, detail=f"Structure generation failed: {e}")
 
     stats_schema = GenerationStatisticsSchema(**statistics)

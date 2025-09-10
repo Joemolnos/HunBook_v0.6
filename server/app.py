@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import re
 
 from .routers.generation import router as generation_router
 from config import REQUIRE_BYOK
@@ -16,12 +17,17 @@ def get_allowed_origins() -> list[str]:
 
 app = FastAPI(title="Groqbook API", version="1.0.0")
 
+# CORS configuration: prefer explicit origins; optionally allow regex fallback
+origins = get_allowed_origins()
+origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX", None)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_allowed_origins(),
+    allow_origins=origins,
+    allow_origin_regex=origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    max_age=86400,
 )
 
 

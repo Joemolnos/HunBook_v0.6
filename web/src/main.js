@@ -471,14 +471,31 @@ async function generate() {
       body: JSON.stringify(streamReq),
       signal: controller.signal,
     });
-
+    // If backend returned non-OK (e.g., 401/429/500), surface the error immediately
+    if (!resp.ok || !resp.body) {
+      let t = '';
+      try { t = await resp.text(); } catch {}
+      throw new Error(`HTTP ${resp.status}: ${t}`);
+    }
     const reader = resp.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buf = '';
+    // Watchdog: abort if no data arrives for a while (e.g., network stalls)
+    let lastActivity = Date.now();
+    const STALL_MS = 45000; // 45s without any data => abort
+    const watchdog = setInterval(() => {
+      if (!inProgress) return;
+      if (Date.now() - lastActivity > STALL_MS) {
+        console.warn('Stream stalled, aborting');
+        try { controller?.abort(); } catch {}
+      }
+    }, 5000);
+    let finishedNormally = false;
 
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
+      lastActivity = Date.now();
       buf += decoder.decode(value, { stream: true });
       let lines = buf.split('\n');
       buf = lines.pop() || '';
@@ -500,6 +517,7 @@ async function generate() {
             completedSections += 1;
             updateProgress();
           } else if (ev.type === 'done') {
+            finishedNormally = true;
             // Build accumulatingContent
             accumulatingContent = '';
             for (const [title, txt] of sectionBuffers.entries()) {
@@ -544,6 +562,17 @@ async function generate() {
         }
       }
     }
+    // If the stream ended without sending a 'done' or explicit error, treat as network stall
+    if (!finishedNormally) {
+      inProgress = false;
+      updateProgress();
+      stopBtn.disabled = true;
+      stopGlobalTimer();
+      if (downloadTxt) downloadTxt.disabled = true;
+      if (downloadPdf) downloadPdf.disabled = true;
+      showNotify('A kapcsolat megszakadt. Próbáld újra.', 'warning');
+      await refreshQuota();
+    }
   } catch (e) {
     console.error(e);
     if (e.name === 'AbortError') {
@@ -581,6 +610,7 @@ async function generate() {
       stopGlobalTimer();
     }
   } finally {
+    try { clearInterval(watchdog); } catch {}
     generateBtn.disabled = false;
     generateBtn.textContent = 'Generálás';
     stopBtn.disabled = true;
