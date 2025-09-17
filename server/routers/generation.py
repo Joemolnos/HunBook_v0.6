@@ -1,6 +1,7 @@
 from typing import Any, Dict, Iterator
 import json
 import asyncio
+import threading
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 
@@ -80,8 +81,11 @@ def generate_structure(req: StructureRequest, request: Request) -> StructureResp
 
 @router.post("/sections/stream")
 async def stream_sections(req: SectionsStreamRequest, request: Request):
-    async def event_stream():  # async generator
+    async def event_stream():  # async generator with thread offload
         cancelled = False
+        cancel_event = threading.Event()
+        queue: asyncio.Queue[Dict[str, Any] | None] = asyncio.Queue(maxsize=100)
+
         # Get BYOK client once for the whole stream
         auth = request.headers.get("authorization") or request.headers.get("Authorization")
         token = None
@@ -91,46 +95,87 @@ async def stream_sections(req: SectionsStreamRequest, request: Request):
             client = get_groq_client(token)
         except ValueError as e:
             # Immediately emit error and end
-            yield (json.dumps({"type": "error", "message": str(e)}) + "\n").encode("utf-8")
-            return
-
+            await queue.put({"type": "error", "message": str(e)})
+            await queue.put(None)
+            cancelled = True
+            cancel_event.set()
+        
         async def monitor_disconnect():
             nonlocal cancelled
             try:
                 while not cancelled:
                     if await request.is_disconnected():
                         cancelled = True
+                        cancel_event.set()
                         break
                     await asyncio.sleep(0.1)
             except Exception:
-                # If we can't monitor, just exit the monitor
                 cancelled = True
+                cancel_event.set()
 
+        def producer():
+            if cancel_event.is_set():
+                return
+            try:
+                # Pull events from blocking generator in a background thread
+                try:
+                    gen = llm_service.iter_sections_stream(
+                        req.structure, req.params,
+                        is_cancelled=lambda: cancel_event.is_set(),
+                        client=client,
+                    )
+                except TypeError:
+                    gen = llm_service.iter_sections_stream(req.structure, req.params)
+                for ev in gen:
+                    if cancel_event.is_set():
+                        break
+                    # Block if queue is full; this is fine in a background thread
+                    asyncio.run_coroutine_threadsafe(queue.put(ev), loop)
+            except Exception as e:  # pragma: no cover
+                asyncio.run_coroutine_threadsafe(queue.put({"type": "error", "message": f"Streaming failed: {e}"}), loop)
+            finally:
+                asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+
+        # Start monitor and producer
+        loop = asyncio.get_running_loop()
         monitor_task = asyncio.create_task(monitor_disconnect())
+        prod_thread = threading.Thread(target=producer, name="sections-producer", daemon=True)
+        prod_thread.start()
 
-        def is_cancelled() -> bool:
-            return cancelled
+        last_sent = asyncio.get_event_loop().time()
+        HEARTBEAT_S = 15.0
 
         try:
-            # Try to pass cancellation callback; fall back if monkeypatched fake doesn't accept it
-            try:
-                gen = llm_service.iter_sections_stream(req.structure, req.params, is_cancelled=is_cancelled, client=client)
-            except TypeError:
-                gen = llm_service.iter_sections_stream(req.structure, req.params)
+            while True:
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_S)
+                except asyncio.TimeoutError:
+                    # Heartbeat to keep proxies from idling out
+                    yield (json.dumps({"type": "ping"}) + "\n").encode("utf-8")
+                    last_sent = asyncio.get_event_loop().time()
+                    continue
 
-            for event in gen:
-                yield (json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8")
-        except Exception as e:
-            err = {"type": "error", "message": f"Streaming failed: {e}"}
-            yield (json.dumps(err, ensure_ascii=False) + "\n").encode("utf-8")
+                if ev is None:
+                    break
+                yield (json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8")
+                last_sent = asyncio.get_event_loop().time()
         finally:
             cancelled = True
+            cancel_event.set()
             try:
                 monitor_task.cancel()
             except Exception:
                 pass
+            # Do not join thread indefinitely; it's daemonized and will exit shortly
 
-    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
+    headers = {
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+        # Hint for some reverse proxies (may be ignored on Render)
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson", headers=headers)
 
 
 @router.get("/quota")
