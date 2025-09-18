@@ -144,6 +144,7 @@ let timerIntervalId = null; // number | null
 // BYOK state
 // null = unknown (not yet fetched), true/false once /config is loaded
 let requireByok = null;
+let hasServerKey = null;
 let byokKey = null;
 let configPromise = null;
 
@@ -438,6 +439,26 @@ async function generate() {
       await new Promise(r => setTimeout(r, 800));
       try { await fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' }); } catch {}
     }
+    // Validate API key availability before starting expensive calls
+    try {
+      const headers = Object.assign({}, byokKey ? { 'Authorization': `Bearer ${byokKey}` } : {});
+      const vr = await fetch(`${API_BASE}/api/key/validate`, {
+        method: 'GET',
+        headers,
+        cache: 'no-store',
+        credentials: 'omit',
+        mode: 'cors',
+      });
+      if (!vr.ok) {
+        const t = await vr.text().catch(() => '');
+        throw new Error(`HTTP ${vr.status}: ${t}`);
+      }
+    } catch (err) {
+      // If BYOK is required or server key is missing/invalid, prompt for key and abort
+      showNotify('Adj meg érvényes Groq API-kulcsot (BYOK) a generáláshoz.', 'warning', 6000);
+      openByok();
+      throw err; // routed to outer catch, which resets UI safely
+    }
     // 1) Structure
     const extraTxt = collectExtraInstructions();
     const structureReq = {
@@ -557,6 +578,13 @@ async function generate() {
             accumulatingContent = '';
             for (const [title, txt] of sectionBuffers.entries()) {
               accumulatingContent += `# ${title}\n\n${txt}\n\n`;
+            }
+            // Force-complete any sections not explicitly closed to avoid UI stuck on last item
+            for (const [title, refs] of sectionStatusEls.entries()) {
+              const stEl = refs?.statusEl;
+              if (stEl && stEl.textContent !== 'Kész') {
+                setSectionStatus(title, 'done');
+              }
             }
             inProgress = false;
             updateProgress();
@@ -701,6 +729,9 @@ async function loadConfig() {
     if (r.ok) {
       const cfg = await r.json();
       requireByok = !!cfg.require_byok;
+      hasServerKey = !!cfg.has_server_key;
+      // If server lacks a key, enforce BYOK client-side too
+      if (hasServerKey === false) requireByok = true;
     }
   } catch {}
 }

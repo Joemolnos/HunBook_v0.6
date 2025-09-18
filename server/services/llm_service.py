@@ -362,7 +362,8 @@ def iter_sections_stream(
 
         c = client or groq_client
         try:
-            c = c.with_options(timeout=90)
+            # Keep streaming responsive: shorter read timeout prevents indefinite hangs on the last section
+            c = c.with_options(timeout=30)
         except Exception:
             pass
 

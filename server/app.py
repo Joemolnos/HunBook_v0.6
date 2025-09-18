@@ -14,7 +14,7 @@ except Exception:  # pragma: no cover
     psutil = None
 
 from .routers.generation import router as generation_router
-from config import REQUIRE_BYOK
+from config import REQUIRE_BYOK, GROQ_API_KEY
 
 
 def get_allowed_origins() -> list[str]:
@@ -207,7 +207,7 @@ async def healthz():
 
 @app.get("/config")
 async def get_config():
-    return {"require_byok": REQUIRE_BYOK}
+    return {"require_byok": REQUIRE_BYOK, "has_server_key": bool(GROQ_API_KEY)}
 
 
 app.include_router(generation_router)

@@ -30,6 +30,44 @@ except Exception:
 router = APIRouter(prefix="/api", tags=["generation"])
 
 
+@router.get("/key/validate")
+def validate_key(request: Request):
+    """Validate provided API key (or server key if BYOK is not required) by performing a lightweight call.
+    Returns {ok: true} on success. Raises 401 if the key is invalid or missing.
+    """
+    # Extract Bearer token if present
+    auth = request.headers.get("authorization") or request.headers.get("Authorization")
+    token = None
+    if auth and auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+    try:
+        client = get_groq_client(token)
+        # Try a non-token-consuming lightweight call if available
+        try:
+            # Many OpenAI-compatible clients expose models.list()
+            _ = client.models.list()  # type: ignore[attr-defined]
+        except Exception:
+            # As a fallback, perform a tiny metadata-only chat call with strict timeout; if it fails
+            # due to invalid key we still surface 401.
+            try:
+                c = client.with_options(timeout=10)
+            except Exception:
+                c = client
+            _ = c.chat.completions.create(
+                model="openai/gpt-oss-20b",
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                temperature=0,
+                stream=False,
+            )
+    except Exception as e:
+        msg = str(e)
+        low = msg.lower()
+        code = 401 if ("401" in msg or "invalid api key" in low or "api key" in low) else 500
+        raise HTTPException(status_code=code, detail=f"Key validation failed: {e}")
+    return {"ok": True}
+
+
 @router.post("/structure", response_model=StructureResponse)
 def generate_structure(req: StructureRequest, request: Request) -> StructureResponse:
     try:
