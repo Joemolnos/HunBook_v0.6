@@ -122,8 +122,11 @@ function updateQuotaUI(perDay, remaining) {
 async function refreshQuota() {
   try {
     const r = await fetch(`${API_BASE}/api/quota`, {
+      method: 'GET',
       headers: Object.assign({}, byokKey ? { 'Authorization': `Bearer ${byokKey}` } : {}),
       cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors',
     });
     if (!r.ok) throw new Error('quota');
     const data = await r.json();
@@ -325,6 +328,9 @@ async function postJSON(path, body, signal, extraHeaders) {
     ),
     body: JSON.stringify(body),
     signal,
+    cache: 'no-store',
+    credentials: 'omit',
+    mode: 'cors',
   });
   if (!r.ok) {
     const t = await r.text();
@@ -423,6 +429,15 @@ async function generate() {
     stopBtn.disabled = false;
     // Start global timer at the beginning of generation
     startGlobalTimer();
+    // Warm up backend to avoid Render Free cold-start CORS/preflight quirks
+    try {
+      const warm = await fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' });
+      if (!warm.ok) throw new Error('warmup');
+    } catch (_) {
+      // small backoff then retry once
+      await new Promise(r => setTimeout(r, 800));
+      try { await fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' }); } catch {}
+    }
     // 1) Structure
     const extraTxt = collectExtraInstructions();
     const structureReq = {
@@ -485,6 +500,9 @@ async function generate() {
       ),
       body: JSON.stringify(streamReq),
       signal: controller.signal,
+      cache: 'no-store',
+      credentials: 'omit',
+      mode: 'cors',
     });
     // If backend returned non-OK (e.g., 401/429/500), surface the error immediately
     if (!resp.ok || !resp.body) {

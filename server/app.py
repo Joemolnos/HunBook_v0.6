@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, Request
+import logging
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import asyncio
@@ -26,22 +27,29 @@ def get_allowed_origins() -> list[str]:
 
 app = FastAPI(title="Groqbook API", version="1.0.0")
 
-# CORS configuration: prefer explicit origins; optionally allow regex fallback
+# CORS configuration: prefer explicit origins; fall back to wildcard without credentials
 origins = get_allowed_origins()
 origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX", None)
-# If wildcard origins are configured together with credentials, switch to a permissive regex and echo request origin.
-# This avoids missing Access-Control-Allow-Origin headers on Render when '*' is used.
-if origins == ["*"] and not origin_regex:
-    origin_regex = r"^https?://.*$"
-    origins = []
+
+# Decide credentials policy:
+# - If explicit origin(s) or regex provided => allow credentials (echo origin)
+# - If wildcard '*' (or empty) => no credentials, wildcard ACAO for simplicity and reliability on Render
+use_wildcard = (not origin_regex) and (origins == ["*"] or origins == [""])
+allow_credentials_flag = not use_wildcard
+
+# For wildcard mode, ensure CORSMiddleware sees '*' and no regex
+if use_wildcard:
+    origins = ["*"]
+    origin_regex = None
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_origin_regex=origin_regex,
-    allow_credentials=True,
+    allow_credentials=allow_credentials_flag,
     allow_methods=["*"],
     allow_headers=["*"],
-    max_age=86400,
+    max_age=0,  # avoid stale preflight caching across domain/config changes
 )
 
 
@@ -143,6 +151,15 @@ async def _track_inflight(request: Request, call_next):
 
 @app.on_event("startup")
 async def _start_metrics():
+    try:
+        logging.getLogger("uvicorn.error").info(
+            "CORS config: origins=%s regex=%s allow_credentials=%s",
+            origins,
+            origin_regex,
+            allow_credentials_flag,
+        )
+    except Exception:
+        pass
     interval = float(os.getenv("METRICS_INTERVAL_S", "1.0") or 1.0)
     app.state.metrics = _MetricsSampler(interval_s=interval)
     app.state.metrics.start(app)
@@ -175,6 +192,12 @@ async def stream_metrics(request: Request):
             yield (json.dumps(data) + "\n").encode("utf-8")
             await asyncio.sleep(getattr(m, "interval_s", 1.0))
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+# As a safety net for unusual proxies, respond to any OPTIONS with 204.
+@app.options("/{rest_of_path:path}")
+async def any_options(rest_of_path: str):
+    return Response(status_code=204)
 
 
 @app.get("/healthz")
