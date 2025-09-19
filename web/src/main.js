@@ -931,9 +931,20 @@ if (advancedTemplatesEl) {
 
 downloadTxt.addEventListener('click', async () => {
   try {
-    if (!accumulatingContent) return;
+    let payload = accumulatingContent;
+    if (!payload) {
+      // Build from current buffers (partial download)
+      let tmp = '';
+      for (const [title, txt] of sectionBuffers.entries()) {
+        if (txt && txt.trim().length) {
+          tmp += `# ${title}\n\n${txt}\n\n`;
+        }
+      }
+      payload = tmp;
+    }
+    if (!payload) return;
     const r = await postJSON('/api/export/markdown', {
-      content: accumulatingContent,
+      content: payload,
       filename: 'groqbook'
     });
     const blob = await r.blob();
@@ -962,9 +973,19 @@ refreshQuota();
 
 downloadPdf.addEventListener('click', async () => {
   try {
-    if (!accumulatingContent) return;
+    let payload = accumulatingContent;
+    if (!payload) {
+      let tmp = '';
+      for (const [title, txt] of sectionBuffers.entries()) {
+        if (txt && txt.trim().length) {
+          tmp += `# ${title}\n\n${txt}\n\n`;
+        }
+      }
+      payload = tmp;
+    }
+    if (!payload) return;
     const r = await postJSON('/api/export/pdf', {
-      content: accumulatingContent,
+      content: payload,
       filename: 'groqbook'
     });
     const blob = await r.blob();

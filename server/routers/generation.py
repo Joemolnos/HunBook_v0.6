@@ -158,9 +158,12 @@ async def stream_sections(req: SectionsStreamRequest, request: Request):
                 # Pull events from blocking generator in a background thread
                 try:
                     gen = llm_service.iter_sections_stream(
-                        req.structure, req.params,
+                        req.structure,
+                        req.params,
                         is_cancelled=lambda: cancel_event.is_set(),
                         client=client,
+                        start_index=int(getattr(req, 'start_index', 0) or 0),
+                        count=getattr(req, 'count', None),
                     )
                 except TypeError:
                     gen = llm_service.iter_sections_stream(req.structure, req.params)

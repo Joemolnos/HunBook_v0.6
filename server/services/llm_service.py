@@ -304,6 +304,8 @@ def iter_sections_stream(
     params: SectionParams,
     is_cancelled: Optional[Callable[[], bool]] = None,
     client=None,
+    start_index: int = 0,
+    count: Optional[int] = None,
 ) -> Iterator[Dict[str, Any]]:
     """
     Yields NDJSON events as dicts: section_start, token, stats, section_end, done
@@ -437,11 +439,18 @@ def iter_sections_stream(
             return
         yield {"type": "section_end", "title": title}
 
-    for idx, item in enumerate(outline):
+    start = max(0, int(start_index or 0))
+    end = len(outline) if count in (None, 0, False) else min(len(outline), start + int(count))
+    # Ensure sane bounds
+    start = min(start, len(outline))
+    end = max(start, end)
+
+    for idx in range(start, end):
+        item = outline[idx]
         if is_cancelled and is_cancelled():
             break
         # Optional pacing to avoid bursting into rate limits
-        if idx > 0 and SECTION_PACING_S > 0:
+        if (idx - start) > 0 and SECTION_PACING_S > 0:
             yield {"type": "rate_limit_wait", "title": item.get("title", ""), "wait": round(SECTION_PACING_S, 2), "message": "pacing"}
             end = time.time() + SECTION_PACING_S
             while time.time() < end:

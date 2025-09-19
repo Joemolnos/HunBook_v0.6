@@ -28,19 +28,10 @@ def get_allowed_origins() -> list[str]:
 app = FastAPI(title="Groqbook API", version="1.0.0")
 
 # CORS configuration: prefer explicit origins; fall back to wildcard without credentials
-origins = get_allowed_origins()
-origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX", None)
-
-# Decide credentials policy:
-# - If explicit origin(s) or regex provided => allow credentials (echo origin)
-# - If wildcard '*' (or empty) => no credentials, wildcard ACAO for simplicity and reliability on Render
-use_wildcard = (not origin_regex) and (origins == ["*"] or origins == [""])
-allow_credentials_flag = not use_wildcard
-
-# For wildcard mode, ensure CORSMiddleware sees '*' and no regex
-if use_wildcard:
-    origins = ["*"]
-    origin_regex = None
+origins = ["*"]
+origin_regex = None
+# On this app we do not depend on cookies; use wildcard CORS to maximize reliability across spin-ups and proxies.
+allow_credentials_flag = False
 
 app.add_middleware(
     CORSMiddleware,
@@ -192,12 +183,6 @@ async def stream_metrics(request: Request):
             yield (json.dumps(data) + "\n").encode("utf-8")
             await asyncio.sleep(getattr(m, "interval_s", 1.0))
     return StreamingResponse(gen(), media_type="application/x-ndjson")
-
-
-# As a safety net for unusual proxies, respond to any OPTIONS with 204.
-@app.options("/{rest_of_path:path}")
-async def any_options(rest_of_path: str):
-    return Response(status_code=204)
 
 
 @app.get("/healthz")
