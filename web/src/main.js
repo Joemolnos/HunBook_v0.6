@@ -140,6 +140,7 @@ async function refreshQuota() {
 let notifyTimeout = null;
 let timerStartMs = null; // number | null
 let timerIntervalId = null; // number | null
+let keepAliveIntervalId = null; // number | null
 
 // BYOK state
 // null = unknown (not yet fetched), true/false once /config is loaded
@@ -430,6 +431,12 @@ async function generate() {
     stopBtn.disabled = false;
     // Start global timer at the beginning of generation
     startGlobalTimer();
+    // Start background keep-alive ping to prevent Render Free 15 min idle spin-down
+    if (keepAliveIntervalId) { clearInterval(keepAliveIntervalId); keepAliveIntervalId = null; }
+    const KEEPALIVE_MS = 7 * 60 * 1000; // 7 minutes
+    keepAliveIntervalId = setInterval(() => {
+      fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' }).catch(() => {});
+    }, KEEPALIVE_MS);
     // Warm up backend to avoid Render Free cold-start CORS/preflight quirks
     try {
       const warm = await fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' });
@@ -674,6 +681,7 @@ async function generate() {
     }
   } finally {
     try { clearInterval(watchdog); } catch {}
+    try { if (keepAliveIntervalId) { clearInterval(keepAliveIntervalId); keepAliveIntervalId = null; } } catch {}
     generateBtn.disabled = false;
     generateBtn.textContent = 'Generálás';
     stopBtn.disabled = true;

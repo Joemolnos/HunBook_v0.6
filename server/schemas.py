@@ -52,6 +52,7 @@ class SectionsStreamRequest(BaseModel):
     structure: Dict[str, Any]
     params: SectionParams = SectionParams()
     start_index: Optional[int] = 0
+    count: Optional[int] = None
 
 
 class ExportRequest(BaseModel):
