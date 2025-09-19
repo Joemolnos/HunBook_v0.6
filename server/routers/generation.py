@@ -274,9 +274,49 @@ def export_pdf(req: ExportRequest):
                 from exporting import create_pdf_file as _cpf  # type: ignore
                 func = _cpf
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"PDF export unavailable: {e}")
-        buf = func(req.content)  # type: ignore
-        data = buf.getvalue()
+                func = None  # fall back to fpdf2 below
+        data = None
+        if func is not None:
+            try:
+                buf = func(req.content)  # type: ignore
+                data = buf.getvalue()
+            except Exception as e:
+                data = None
+        if data is None:
+            # Fallback: generate a very simple PDF with fpdf2 so downloads always work
+            try:
+                from fpdf import FPDF  # type: ignore
+                pdf = FPDF()
+                pdf.set_auto_page_break(auto=True, margin=15)
+                pdf.add_page()
+                try:
+                    pdf.set_font("Helvetica", size=12)
+                except Exception:
+                    pdf.set_font("Arial", size=12)
+                # Very naive Markdown-to-text: strip headings and write lines
+                for raw_line in (req.content or "").splitlines():
+                    line = raw_line.strip()
+                    if not line:
+                        pdf.ln(5)
+                        continue
+                    if line.startswith("#"):
+                        # Treat markdown heading as bold, slightly bigger
+                        level = len(line) - len(line.lstrip('#'))
+                        text = line[level:].strip()
+                        try:
+                            pdf.set_font("Helvetica", "B", size=max(12, 18 - level*2))
+                        except Exception:
+                            pdf.set_font("Arial", "B", size=max(12, 18 - level*2))
+                        pdf.multi_cell(0, 8, txt=text)
+                        try:
+                            pdf.set_font("Helvetica", size=12)
+                        except Exception:
+                            pdf.set_font("Arial", size=12)
+                    else:
+                        pdf.multi_cell(0, 6, txt=line)
+                data = pdf.output(dest='S').encode('latin1')
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"PDF export failed: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF export failed: {e}")
     headers = {"Content-Disposition": f"attachment; filename={req.filename or 'generated_book'}.pdf"}
