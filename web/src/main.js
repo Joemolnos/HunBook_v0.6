@@ -94,6 +94,7 @@ let inProgress = false;
 let totalSections = 0;
 let completedSections = 0;
 const sectionStatusEls = new Map(); // title -> {container, statusEl, spinnerEl}
+let userAborted = false;
 
 function setSectionWait(title, seconds, message) {
   ensureSectionContainer(title);
@@ -500,8 +501,8 @@ async function generate() {
     // Enable Stop only once structure is ready and streaming will start
     stopBtn.disabled = false;
 
-    // 2) Stream sections
-    const streamReq = {
+    // 2) Stream sections with resumable attempts
+    const baseStreamReq = {
       structure: structureRes.structure,
       params: {
         model: selectedModel,
@@ -517,131 +518,187 @@ async function generate() {
       },
     };
 
-    // Reuse the same controller for the streaming phase
+    // Disable downloads during streaming
     if (downloadTxt) downloadTxt.disabled = true;
     if (downloadPdf) downloadPdf.disabled = true;
-    const resp = await fetch(`${API_BASE}/api/sections/stream`, {
-      method: 'POST',
-      headers: Object.assign(
-        { 'Content-Type': 'application/json' },
-        byokKey ? { 'Authorization': `Bearer ${byokKey}` } : {}
-      ),
-      body: JSON.stringify(streamReq),
-      signal: controller.signal,
-      cache: 'no-store',
-      credentials: 'omit',
-      mode: 'cors',
-    });
-    // If backend returned non-OK (e.g., 401/429/500), surface the error immediately
-    if (!resp.ok || !resp.body) {
-      let t = '';
-      try { t = await resp.text(); } catch {}
-      throw new Error(`HTTP ${resp.status}: ${t}`);
-    }
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let buf = '';
-    // Watchdog: abort if no data arrives for a while (e.g., network stalls)
-    let lastActivity = Date.now();
-    const STALL_MS = 45000; // 45s without any data => abort
-    const watchdog = setInterval(() => {
-      if (!inProgress) return;
-      if (Date.now() - lastActivity > STALL_MS) {
-        console.warn('Stream stalled, aborting');
-        try { controller?.abort(); } catch {}
-      }
-    }, 5000);
-    let finishedNormally = false;
 
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      lastActivity = Date.now();
-      buf += decoder.decode(value, { stream: true });
-      let lines = buf.split('\n');
-      buf = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
+    const MAX_RESUME = 2;
+    let allDone = false;
+    userAborted = false;
+
+    for (let attempt = 0; attempt <= MAX_RESUME; attempt++) {
+      if (userAborted) break;
+      const startIndex = completedSections;
+      // Clear partial buffer for the next section to re-run cleanly
+      try {
+        const leaves = flattenStructure(structureRes.structure);
+        const t = leaves[startIndex]?.title;
+        if (t) sectionBuffers.set(t, '');
+      } catch {}
+      // Visually reset non-done items to pending
+      for (const [title, refs] of sectionStatusEls.entries()) {
+        const stEl = refs?.statusEl;
+        if (stEl && stEl.textContent !== 'Kész') setSectionStatus(title, 'pending');
+      }
+
+      const streamReq = Object.assign({}, baseStreamReq, { start_index: startIndex });
+      let finishedNormally = false;
+
+      try {
+        // Fresh controller for each attempt so prior AbortError doesn't poison the next fetch
+        controller = new AbortController();
+        const resp = await fetch(`${API_BASE}/api/sections/stream`, {
+          method: 'POST',
+          headers: Object.assign(
+            { 'Content-Type': 'application/json' },
+            byokKey ? { 'Authorization': `Bearer ${byokKey}` } : {}
+          ),
+          body: JSON.stringify(streamReq),
+          signal: controller.signal,
+          cache: 'no-store',
+          credentials: 'omit',
+          mode: 'cors',
+        });
+        if (!resp.ok || !resp.body) {
+          let t = '';
+          try { t = await resp.text(); } catch {}
+          throw new Error(`HTTP ${resp.status}: ${t}`);
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buf = '';
+        // Per-attempt watchdog
+        let lastActivity = Date.now();
+        const STALL_MS = 45000;
+        const watchdogId = setInterval(() => {
+          if (!inProgress) return;
+          if (Date.now() - lastActivity > STALL_MS) {
+            console.warn('Stream stalled, aborting');
+            try { controller?.abort(); } catch {}
+          }
+        }, 5000);
+
         try {
-          const ev = JSON.parse(line);
-          if (ev.type === 'section_start') {
-            ensureSectionContainer(ev.title);
-            setSectionStatus(ev.title, 'in_progress');
-          } else if (ev.type === 'token') {
-            // Do not render live text; only accumulate for download
-            const curr = sectionBuffers.get(ev.title) || '';
-            sectionBuffers.set(ev.title, curr + ev.delta);
-          } else if (ev.type === 'stats') {
-            updateStatsFromEvent(ev);
-          } else if (ev.type === 'rate_limit_wait') {
-            setSectionWait(ev.title, ev.wait, ev.message);
-          } else if (ev.type === 'section_end') {
-            setSectionStatus(ev.title, 'done');
-            completedSections += 1;
-            updateProgress();
-          } else if (ev.type === 'done') {
-            finishedNormally = true;
-            // Build accumulatingContent
-            accumulatingContent = '';
-            for (const [title, txt] of sectionBuffers.entries()) {
-              accumulatingContent += `# ${title}\n\n${txt}\n\n`;
-            }
-            // Force-complete any sections not explicitly closed to avoid UI stuck on last item
-            for (const [title, refs] of sectionStatusEls.entries()) {
-              const stEl = refs?.statusEl;
-              if (stEl && stEl.textContent !== 'Kész') {
-                setSectionStatus(title, 'done');
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            lastActivity = Date.now();
+            buf += decoder.decode(value, { stream: true });
+            let lines = buf.split('\n');
+            buf = lines.pop() || '';
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const ev = JSON.parse(line);
+                if (ev.type === 'section_start') {
+                  ensureSectionContainer(ev.title);
+                  setSectionStatus(ev.title, 'in_progress');
+                } else if (ev.type === 'token') {
+                  const curr = sectionBuffers.get(ev.title) || '';
+                  sectionBuffers.set(ev.title, curr + ev.delta);
+                } else if (ev.type === 'stats') {
+                  updateStatsFromEvent(ev);
+                } else if (ev.type === 'rate_limit_wait') {
+                  setSectionWait(ev.title, ev.wait, ev.message);
+                } else if (ev.type === 'section_end') {
+                  setSectionStatus(ev.title, 'done');
+                  completedSections += 1;
+                  updateProgress();
+                } else if (ev.type === 'done') {
+                  finishedNormally = true;
+                  // Build accumulatingContent
+                  accumulatingContent = '';
+                  for (const [title, txt] of sectionBuffers.entries()) {
+                    accumulatingContent += `# ${title}\n\n${txt}\n\n`;
+                  }
+                  // Force-complete any sections not explicitly closed
+                  for (const [title, refs] of sectionStatusEls.entries()) {
+                    const stEl = refs?.statusEl;
+                    if (stEl && stEl.textContent !== 'Kész') {
+                      setSectionStatus(title, 'done');
+                    }
+                  }
+                } else if (ev.type === 'error') {
+                  console.error('Stream error:', ev.message);
+                  throw new Error(ev.message || 'stream-error');
+                } else if (ev.type === 'aborted') {
+                  // Backend-side cancellation; treat as abort
+                  throw new Error('aborted');
+                }
+              } catch (e) {
+                console.warn('Bad NDJSON line', line, e);
               }
             }
-            inProgress = false;
-            updateProgress();
-            stopBtn.disabled = true;
-            stopGlobalTimer();
-            if (downloadTxt) downloadTxt.disabled = false;
-            if (downloadPdf) downloadPdf.disabled = false;
-            showNotify('A generálás befejeződött. Letöltésre kész.', 'success');
-            await refreshQuota();
-          } else if (ev.type === 'error') {
-            console.error('Stream error:', ev.message);
-            inProgress = false;
-            stopBtn.disabled = true;
-            stopGlobalTimer();
-            if (downloadTxt) downloadTxt.disabled = true;
-            if (downloadPdf) downloadPdf.disabled = true;
-            if (String(ev.message || '').toLowerCase().includes('api key')) {
-              showNotify('Adj meg Groq API-kulcsot (BYOK) a generáláshoz.', 'warning');
-              openByok();
-            } else {
-              showNotify('Hiba történt, kérlek próbáld újra', 'error');
-            }
-            await refreshQuota();
-          } else if (ev.type === 'aborted') {
-            // Backend-side cancellation
-            inProgress = false;
-            stopBtn.disabled = true;
-            stopGlobalTimer();
-            // Ensure downloads remain disabled and UI resets
-            if (downloadTxt) downloadTxt.disabled = true;
-            if (downloadPdf) downloadPdf.disabled = true;
-            resetUI();
-            showNotify('A generálás megszakítva.', 'warning');
-            await refreshQuota();
           }
-        } catch (e) {
-          console.warn('Bad NDJSON line', line, e);
+        } finally {
+          try { clearInterval(watchdogId); } catch {}
         }
+
+        if (finishedNormally) {
+          allDone = true;
+          inProgress = false;
+          updateProgress();
+          stopBtn.disabled = true;
+          stopGlobalTimer();
+          if (downloadTxt) downloadTxt.disabled = false;
+          if (downloadPdf) downloadPdf.disabled = false;
+          showNotify('A generálás befejeződött. Letöltésre kész.', 'success');
+          await refreshQuota();
+          break;
+        } else {
+          if (userAborted) break;
+          showNotify(`A kapcsolat megszakadt, újracsatlakozás… (${attempt + 1}/${MAX_RESUME + 1})`, 'warning');
+          await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+          continue;
+        }
+      } catch (e) {
+        if (e && e.name === 'AbortError') {
+          if (userAborted) break; // user pressed Stop
+          // watchdog abort → retry
+          showNotify(`Kapcsolat megszakadt, próbálkozás… (${attempt + 1}/${MAX_RESUME + 1})`, 'warning');
+          await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+          continue;
+        }
+        const msg = (e && e.message) ? e.message : '';
+        if (msg.includes('HTTP 401') || msg.toLowerCase().includes('api key')) {
+          showNotify('Adj meg Groq API-kulcsot (BYOK) a generáláshoz.', 'warning');
+          openByok();
+          throw e; // propagate to outer catch
+        }
+        if (msg.includes('HTTP 429')) {
+          showNotify('Elérted a napi keretet ennél a modellnél. Válts 120B-re vagy próbáld később.', 'warning', 6000);
+          await refreshQuota();
+          throw e;
+        }
+        // Other network/server errors → retry
+        showNotify(`Hálózati hiba, újrapróbálkozás… (${attempt + 1}/${MAX_RESUME + 1})`, 'warning');
+        await new Promise(r => setTimeout(r, 1200 * (attempt + 1)));
+        continue;
       }
     }
-    // If the stream ended without sending a 'done' or explicit error, treat as network stall
-    if (!finishedNormally) {
-      inProgress = false;
-      updateProgress();
-      stopBtn.disabled = true;
-      stopGlobalTimer();
-      if (downloadTxt) downloadTxt.disabled = true;
-      if (downloadPdf) downloadPdf.disabled = true;
-      showNotify('A kapcsolat megszakadt. Próbáld újra.', 'warning');
-      await refreshQuota();
+
+    if (!allDone) {
+      if (userAborted) {
+        // User stopped the run
+        resetUI();
+        showNotify('A generálás megszakítva.', 'warning');
+        await refreshQuota();
+      } else {
+        // Retries exhausted
+        inProgress = false;
+        updateProgress();
+        stopBtn.disabled = true;
+        stopGlobalTimer();
+        if (downloadTxt) downloadTxt.disabled = true;
+        if (downloadPdf) downloadPdf.disabled = true;
+        // Mark non-done sections as error
+        for (const [title, refs] of sectionStatusEls.entries()) {
+          const stEl = refs?.statusEl;
+          if (stEl && stEl.textContent !== 'Kész') setSectionStatus(title, 'error');
+        }
+        showNotify('A kapcsolat megszakadt és nem sikerült újracsatlakozni.', 'error');
+        await refreshQuota();
+      }
     }
   } catch (e) {
     console.error(e);
@@ -680,7 +737,6 @@ async function generate() {
       stopGlobalTimer();
     }
   } finally {
-    try { clearInterval(watchdog); } catch {}
     try { if (keepAliveIntervalId) { clearInterval(keepAliveIntervalId); keepAliveIntervalId = null; } } catch {}
     generateBtn.disabled = false;
     generateBtn.textContent = 'Generálás';
@@ -821,6 +877,7 @@ bindRange(targetLenEl, targetLenVal);
 generateBtn.addEventListener('click', generate);
 
 stopBtn.addEventListener('click', () => {
+  userAborted = true;
   if (controller) {
     controller.abort();
   }
