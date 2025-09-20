@@ -261,7 +261,14 @@ def export_markdown(req: ExportRequest):
         data = buf.getvalue()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Markdown export failed: {e}")
-    headers = {"Content-Disposition": f"attachment; filename={req.filename or 'generated_book'}.txt"}
+    headers = {
+        "Content-Disposition": f"attachment; filename={req.filename or 'generated_book'}.txt",
+        # Ensure CORS on Render even if middleware is bypassed
+        "Access-Control-Allow-Origin": "*",
+        # Expose Content-Disposition to client JS when reading headers
+        "Access-Control-Expose-Headers": "Content-Disposition",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+    }
     return Response(content=data, media_type="text/plain; charset=utf-8", headers=headers)
 
 
@@ -319,5 +326,33 @@ def export_pdf(req: ExportRequest):
                 raise HTTPException(status_code=500, detail=f"PDF export failed: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF export failed: {e}")
-    headers = {"Content-Disposition": f"attachment; filename={req.filename or 'generated_book'}.pdf"}
+    headers = {
+        "Content-Disposition": f"attachment; filename={req.filename or 'generated_book'}.pdf",
+        # Ensure CORS on Render even if middleware is bypassed
+        "Access-Control-Allow-Origin": "*",
+        # Expose Content-Disposition to client JS when reading headers
+        "Access-Control-Expose-Headers": "Content-Disposition",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+    }
     return Response(content=data, media_type="application/pdf", headers=headers)
+
+
+# Explicit preflight handlers to be extra-safe on Render proxies
+@router.options("/export/markdown")
+def options_export_markdown():
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Max-Age": "600",
+    })
+
+
+@router.options("/export/pdf")
+def options_export_pdf():
+    return Response(status_code=204, headers={
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+        "Access-Control-Max-Age": "600",
+    })
