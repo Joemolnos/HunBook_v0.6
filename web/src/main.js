@@ -126,6 +126,9 @@ function updateQuotaUI(perDay, remaining) {
 
 async function refreshQuota() {
   try {
+    if (!warmedUp) {
+      await warmupApi(3);
+    }
     const r = await fetch(`${API_BASE}/api/quota`, {
       method: 'GET',
       headers: Object.assign({}, byokKey ? { 'Authorization': `Bearer ${byokKey}` } : {}),
@@ -146,6 +149,7 @@ let notifyTimeout = null;
 let timerStartMs = null; // number | null
 let timerIntervalId = null; // number | null
 let keepAliveIntervalId = null; // number | null
+let warmedUp = false; // API health check status
 
 // BYOK state
 // null = unknown (not yet fetched), true/false once /config is loaded
@@ -390,6 +394,28 @@ function stopGlobalTimer() {
   }
 }
 
+// Warm up API to avoid CORS-looking net::ERR_FAILED during cold start
+async function warmupApi(maxAttempts = 3) {
+  if (warmedUp) return true;
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const r = await fetch(`${API_BASE}/healthz`, {
+        method: 'GET',
+        mode: 'cors',
+        cache: 'no-store',
+        credentials: 'omit',
+      });
+      if (r.ok) {
+        warmedUp = true;
+        return true;
+      }
+    } catch {}
+    // small backoff
+    await new Promise(res => setTimeout(res, 400 * (i + 1)));
+  }
+  return warmedUp;
+}
+
 function estimateWordCount() {
   let total = 0;
   for (const txt of sectionBuffers.values()) {
@@ -460,30 +486,61 @@ async function generate() {
     try {
       const warm = await fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' });
       if (!warm.ok) throw new Error('warmup');
+      warmedUp = true;
     } catch (_) {
       // small backoff then retry once
       await new Promise(r => setTimeout(r, 800));
-      try { await fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' }); } catch {}
+      try {
+        const w2 = await fetch(`${API_BASE}/healthz`, { method: 'GET', mode: 'cors', cache: 'no-store', credentials: 'omit' });
+        if (w2.ok) warmedUp = true;
+      } catch {}
     }
     // Validate API key availability before starting expensive calls
-    try {
+    {
       const headers = Object.assign({}, byokKey ? { 'Authorization': `Bearer ${byokKey}` } : {});
-      const vr = await fetch(`${API_BASE}/api/key/validate`, {
-        method: 'GET',
-        headers,
-        cache: 'no-store',
-        credentials: 'omit',
-        mode: 'cors',
-      });
-      if (!vr.ok) {
-        const t = await vr.text().catch(() => '');
-        throw new Error(`HTTP ${vr.status}: ${t}`);
+      let validated = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const vr = await fetch(`${API_BASE}/api/key/validate`, {
+            method: 'GET',
+            headers,
+            cache: 'no-store',
+            credentials: 'omit',
+            mode: 'cors',
+          });
+          if (!vr.ok) {
+            if (vr.status === 401) {
+              // Invalid/missing key
+              const t = await vr.text().catch(() => '');
+              throw new Error(`HTTP 401: ${t}`);
+            }
+            const t = await vr.text().catch(() => '');
+            throw new Error(`HTTP ${vr.status}: ${t}`);
+          }
+          validated = true;
+          break;
+        } catch (err) {
+          const msg = (err && err.message) ? err.message : '';
+          if (msg.includes('HTTP 401')) {
+            // Only in true auth error we prompt BYOK
+            showNotify('Adj meg érvényes Groq API-kulcsot (BYOK) a generáláshoz.', 'warning', 6000);
+            openByok();
+            throw err;
+          }
+          // Network/other errors → warmup + retry limited times
+          if (attempt < 2) {
+            await warmupApi(3);
+            await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
+            continue;
+          } else {
+            showNotify('A szerver éppen ébred. Kérlek, próbáld meg újra pár másodperc múlva.', 'warning', 5000);
+            throw err;
+          }
+        }
       }
-    } catch (err) {
-      // If BYOK is required or server key is missing/invalid, prompt for key and abort
-      showNotify('Adj meg érvényes Groq API-kulcsot (BYOK) a generáláshoz.', 'warning', 6000);
-      openByok();
-      throw err; // routed to outer catch, which resets UI safely
+      if (!validated) {
+        throw new Error('validate-failed');
+      }
     }
     // 1) Structure
     const extraTxt = collectExtraInstructions();
@@ -832,7 +889,10 @@ function loadByok() {
 }
 async function loadConfig() {
   try {
-    const r = await fetch(`${API_BASE}/config`);
+    if (!warmedUp) {
+      await warmupApi(5);
+    }
+    const r = await fetch(`${API_BASE}/config`, { method: 'GET', mode: 'cors', credentials: 'omit', cache: 'no-store' });
     if (r.ok) {
       const cfg = await r.json();
       requireByok = !!cfg.require_byok;
