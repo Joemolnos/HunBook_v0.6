@@ -13,6 +13,9 @@ const statsSpeed = document.getElementById('statSpeed');
 const statsTokens = document.getElementById('statTokens');
 const downloadTxt = document.getElementById('downloadTxt');
 const downloadPdf = document.getElementById('downloadPdf');
+// Glass overlay elements
+const glassOverlay = document.getElementById('glassOverlay');
+const glassText = document.getElementById('glassText');
 
 // Quota elements
 const quotaLabel = document.getElementById('quotaLabel');
@@ -95,6 +98,7 @@ let totalSections = 0;
 let completedSections = 0;
 const sectionStatusEls = new Map(); // title -> {container, statusEl, spinnerEl}
 let userAborted = false;
+const MAX_SECTIONS = 25; // hard cap on chapter count
 
 function setSectionWait(title, seconds, message) {
   ensureSectionContainer(title);
@@ -180,6 +184,18 @@ function hideNotify() {
     clearTimeout(notifyTimeout);
     notifyTimeout = null;
   }
+}
+
+function showGlass(text) {
+  try {
+    if (glassText) glassText.textContent = text || 'Folyamatban…';
+    if (glassOverlay) glassOverlay.classList.remove('hidden');
+  } catch {}
+}
+function hideGlass() {
+  try {
+    if (glassOverlay) glassOverlay.classList.add('hidden');
+  } catch {}
 }
 
 function showNotify(text, type = 'info', durationMs = 4000) {
@@ -432,6 +448,8 @@ async function generate() {
     stopBtn.disabled = false;
     // Start global timer at the beginning of generation
     startGlobalTimer();
+    // Show glass while building outline (this can take 15–30s)
+    showGlass('Fejezetek összeállítása folyamatban, kis türelmet kérek…');
     // Start background keep-alive ping to prevent Render Free 15 min idle spin-down
     if (keepAliveIntervalId) { clearInterval(keepAliveIntervalId); keepAliveIntervalId = null; }
     const KEEPALIVE_MS = 7 * 60 * 1000; // 7 minutes
@@ -488,7 +506,11 @@ async function generate() {
     await refreshQuota();
 
     // Flatten and render skeletons (titles only)
-    const leaves = flattenStructure(structureRes.structure);
+    let leaves = flattenStructure(structureRes.structure);
+    if (leaves.length > MAX_SECTIONS) {
+      leaves = leaves.slice(0, MAX_SECTIONS);
+      showNotify(`A fejezetek száma ${MAX_SECTIONS}-re korlátozva.`, 'info', 4000);
+    }
     totalSections = leaves.length;
     completedSections = 0;
     for (const item of leaves) {
@@ -500,6 +522,8 @@ async function generate() {
     updateProgress();
     // Enable Stop only once structure is ready and streaming will start
     stopBtn.disabled = false;
+    // Hide glass now that outline is visible
+    hideGlass();
 
     // 2) Stream sections with resumable attempts
     const baseStreamReq = {
@@ -541,7 +565,7 @@ async function generate() {
         if (stEl && stEl.textContent !== 'Kész') setSectionStatus(title, 'pending');
       }
 
-      const streamReq = Object.assign({}, baseStreamReq, { start_index: startIndex });
+      const streamReq = Object.assign({}, baseStreamReq, { start_index: startIndex, count: MAX_SECTIONS });
       let finishedNormally = false;
 
       try {
@@ -666,9 +690,21 @@ async function generate() {
           throw e; // propagate to outer catch
         }
         if (msg.includes('HTTP 429')) {
-          showNotify('Elérted a napi keretet ennél a modellnél. Válts 120B-re vagy próbáld később.', 'warning', 6000);
-          await refreshQuota();
-          throw e;
+          const low = msg.toLowerCase();
+          const isTPD = low.includes('tokens per day') || low.includes('tpd') || low.includes('rate_limit_exceeded');
+          if (isTPD) {
+            const m = msg.match(/try again in\s+([0-9a-zA-Z\.:]+)\b/i);
+            const wait = m ? m[1] : null;
+            showNotify(`Mára felhasználtad a generálható szavak számát (TPD). ${wait ? `Próbáld újra kb. ${wait} múlva.` : ''}`, 'warning', 8000);
+            await refreshQuota();
+            // Stop further retries for today
+            userAborted = true;
+            throw e;
+          } else {
+            showNotify('Elérted a napi keretet ennél a modellnél. Válts 120B-re vagy próbáld később.', 'warning', 6000);
+            await refreshQuota();
+            throw e;
+          }
         }
         // Other network/server errors → retry
         showNotify(`Hálózati hiba, újrapróbálkozás… (${attempt + 1}/${MAX_RESUME + 1})`, 'warning');
@@ -710,7 +746,13 @@ async function generate() {
     } else {
       const msg = (e && e.message) ? e.message : '';
       if (msg.includes('HTTP 429')) {
-        if (msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('daily quota')) {
+        const low = msg.toLowerCase();
+        const isTPD = low.includes('tokens per day') || low.includes('tpd') || low.includes('rate_limit_exceeded');
+        if (isTPD) {
+          const m = msg.match(/try again in\s+([0-9a-zA-Z\.:]+)\b/i);
+          const wait = m ? m[1] : null;
+          showNotify(`Mára felhasználtad a generálható szavak számát (TPD). ${wait ? `Próbáld újra kb. ${wait} múlva.` : ''}`, 'warning', 8000);
+        } else if (low.includes('quota')) {
           showNotify('Elérted a mai kvótát. Kérjük, próbáld meg holnap újra.', 'warning', 6000);
         } else {
           showNotify('Elérted a napi keretet ennél a modellnél. Válts 120B-re vagy próbáld később.', 'warning', 6000);
@@ -738,6 +780,7 @@ async function generate() {
     }
   } finally {
     try { if (keepAliveIntervalId) { clearInterval(keepAliveIntervalId); keepAliveIntervalId = null; } } catch {}
+    hideGlass();
     generateBtn.disabled = false;
     generateBtn.textContent = 'Generálás';
     stopBtn.disabled = true;
@@ -988,6 +1031,7 @@ if (advancedTemplatesEl) {
 
 downloadTxt.addEventListener('click', async () => {
   try {
+    showGlass('A könyv előkészítése exportálásra…');
     let payload = accumulatingContent;
     if (!payload) {
       // Build from current buffers (partial download)
@@ -1016,6 +1060,8 @@ downloadTxt.addEventListener('click', async () => {
   } catch (err) {
     console.error(err);
     showNotify('Hiba történt, kérlek próbáld újra', 'error');
+  } finally {
+    hideGlass();
   }
 });
 
@@ -1030,6 +1076,7 @@ refreshQuota();
 
 downloadPdf.addEventListener('click', async () => {
   try {
+    showGlass('A könyv előkészítése exportálásra…');
     let payload = accumulatingContent;
     if (!payload) {
       let tmp = '';
@@ -1057,5 +1104,7 @@ downloadPdf.addEventListener('click', async () => {
   } catch (err) {
     console.error(err);
     showNotify('Hiba történt, kérlek próbáld újra', 'error');
+  } finally {
+    hideGlass();
   }
 });

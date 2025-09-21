@@ -19,6 +19,7 @@ SYSTEM_STRUCTURE = (
 
 logger = logging.getLogger(__name__)
 SECTION_PACING_S = float(os.getenv("SECTION_PACING_S", "0"))  # optional pacing between sections
+MAX_SECTIONS = int(os.getenv("MAX_SECTIONS", "25") or 25)
 
 
 def _language_instruction(language: str) -> str:
@@ -106,8 +107,33 @@ def _strip_intro_conclusion(sections: Dict[str, Any], include_intro: bool, inclu
             if not drop:
                 out[k] = v
         return out
+
+
+def _limit_leaves(sections: Dict[str, Any], max_leaves: int) -> Dict[str, Any]:
+    """Return a copy of sections limited to the first max_leaves leaves (depth-first order).
+    Leaves are entries where value is a string. Container nodes are preserved only if they have kept children.
+    """
+    count = 0
+
+    def walk(d: Dict[str, Any]) -> Dict[str, Any]:
+        nonlocal count
+        out: Dict[str, Any] = {}
+        for k, v in d.items():
+            if isinstance(v, dict):
+                child = walk(v)
+                if child:
+                    out[k] = child
+            else:
+                if count < max_leaves:
+                    out[k] = v
+                    count += 1
+                else:
+                    # skip extra leaves
+                    continue
+        return out
+
     try:
-        return filt(sections or {})
+        return walk(sections or {})
     except Exception:
         return sections
 
@@ -284,6 +310,12 @@ def generate_book_structure_service(subject: str, params: StructureParams, clien
         structure = _refine_structure_for_coherence(subject, extra_txt, structure, params, client=client)
     except Exception:
         # keep original structure if refine fails
+        pass
+
+    # Enforce maximum number of sections
+    try:
+        structure = _limit_leaves(structure, MAX_SECTIONS)
+    except Exception:
         pass
 
     # Serialize statistics to dict compatible with API schema

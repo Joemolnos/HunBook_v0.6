@@ -193,6 +193,14 @@
       </div>
     </div>
 
+    <!-- Glass overlay for long operations (structure/export) -->
+    <div id="glassOverlay" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 hidden flex items-center justify-center">
+      <div class="bg-zinc-900/80 border border-zinc-800 rounded-lg px-6 py-5 flex items-center gap-3 shadow-xl">
+        <div class="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+        <div id="glassText" class="text-sm text-zinc-200">Folyamatban…</div>
+      </div>
+    </div>
+
     <!-- BYOK Modal -->
     <div id="byokOverlay" class="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 hidden"></div>
     <div id="byokModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
