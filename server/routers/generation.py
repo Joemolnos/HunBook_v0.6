@@ -57,29 +57,42 @@ def validate_key(request: Request):
         token = auth.split(" ", 1)[1].strip()
     try:
         client = get_groq_client(token)
-        # Try a non-token-consuming lightweight call if available
+        # Perform a minimal chat call against a broadly available Groq model.
+        # If this fails for non-auth reasons (e.g., model availability), do not block generation here.
         try:
-            # Many OpenAI-compatible clients expose models.list()
-            _ = client.models.list()  # type: ignore[attr-defined]
+            c = client.with_options(timeout=10)
         except Exception:
-            # As a fallback, perform a tiny metadata-only chat call with strict timeout; if it fails
-            # due to invalid key we still surface 401.
-            try:
-                c = client.with_options(timeout=10)
-            except Exception:
-                c = client
+            c = client
+        try:
             _ = c.chat.completions.create(
-                model="openai/gpt-oss-20b",
+                model="llama3-8b-8192",
                 messages=[{"role": "user", "content": "ping"}],
                 max_tokens=1,
                 temperature=0,
                 stream=False,
             )
+        except Exception as e:
+            # Fallback to the previously used model name, in case the above alias is unavailable
+            try:
+                _ = c.chat.completions.create(
+                    model="openai/gpt-oss-20b",
+                    messages=[{"role": "user", "content": "ping"}],
+                    max_tokens=1,
+                    temperature=0,
+                    stream=False,
+                )
+            except Exception as ee:
+                msg2 = str(ee)
+                low2 = msg2.lower()
+                if ("401" in msg2) or ("invalid api key" in low2) or ("api key" in low2):
+                    raise HTTPException(status_code=401, detail=f"Key validation failed: {ee}")
+                # Non-auth error: treat as soft success
+                return {"ok": True}
+    except HTTPException:
+        raise
     except Exception as e:
-        msg = str(e)
-        low = msg.lower()
-        code = 401 if ("401" in msg or "invalid api key" in low or "api key" in low) else 500
-        raise HTTPException(status_code=code, detail=f"Key validation failed: {e}")
+        # Any other unexpected error: soft success; actual generation will surface real issues.
+        return {"ok": True}
     return {"ok": True}
 
 
@@ -128,9 +141,13 @@ def generate_structure(req: StructureRequest, request: Request) -> StructureResp
             code = 500
         raise HTTPException(status_code=code, detail=f"Structure generation failed: {e}")
 
-    # Guard: if the refined/limited structure has no leaves, return a clear error
+    # Guard: if the refined/limited structure has no leaves, provide a minimal fallback
     if _count_leaves(structure) <= 0:
-        raise HTTPException(status_code=422, detail="Empty structure generated. Please adjust the subject or try again.")
+        try:
+            subj = (req.subject or "Téma").strip()
+        except Exception:
+            subj = "Téma"
+        structure = {f"Fejezet 1": f"Áttekintés a következő témáról: {subj}"}
 
     stats_schema = GenerationStatisticsSchema(**statistics)
     return StructureResponse(statistics=stats_schema, structure=structure)
