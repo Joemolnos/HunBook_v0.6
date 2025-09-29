@@ -30,6 +30,21 @@ except Exception:
 router = APIRouter(prefix="/api", tags=["generation"])
 
 
+def _count_leaves(sections: Dict[str, Any]) -> int:
+    def walk(d: Dict[str, Any]) -> int:
+        n = 0
+        for v in (d or {}).values():
+            if isinstance(v, str):
+                n += 1
+            elif isinstance(v, dict):
+                n += walk(v)
+        return n
+    try:
+        return walk(sections or {})
+    except Exception:
+        return 0
+
+
 @router.get("/key/validate")
 def validate_key(request: Request):
     """Validate provided API key (or server key if BYOK is not required) by performing a lightweight call.
@@ -112,6 +127,10 @@ def generate_structure(req: StructureRequest, request: Request) -> StructureResp
         else:
             code = 500
         raise HTTPException(status_code=code, detail=f"Structure generation failed: {e}")
+
+    # Guard: if the refined/limited structure has no leaves, return a clear error
+    if _count_leaves(structure) <= 0:
+        raise HTTPException(status_code=422, detail="Empty structure generated. Please adjust the subject or try again.")
 
     stats_schema = GenerationStatisticsSchema(**statistics)
     return StructureResponse(statistics=stats_schema, structure=structure)

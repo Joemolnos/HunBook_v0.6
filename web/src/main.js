@@ -568,6 +568,15 @@ async function generate() {
       leaves = leaves.slice(0, MAX_SECTIONS);
       showNotify(`A fejezetek száma ${MAX_SECTIONS}-re korlátozva.`, 'info', 4000);
     }
+    if (leaves.length === 0) {
+      // Abort early: avoid streaming "done" without content
+      hideGlass();
+      inProgress = false;
+      updateProgress();
+      stopGlobalTimer();
+      showNotify('Nem sikerült fejezeteket összeállítani. Kérlek, pontosítsd a témát és próbáld újra.', 'warning', 6000);
+      return;
+    }
     totalSections = leaves.length;
     completedSections = 0;
     for (const item of leaves) {
@@ -686,6 +695,10 @@ async function generate() {
                   completedSections += 1;
                   updateProgress();
                 } else if (ev.type === 'done') {
+                  if (completedSections === 0) {
+                    // Treat as error to avoid false "finished" when nothing was generated
+                    throw new Error('no-content');
+                  }
                   finishedNormally = true;
                   // Build accumulatingContent
                   accumulatingContent = '';
@@ -741,6 +754,11 @@ async function generate() {
           continue;
         }
         const msg = (e && e.message) ? e.message : '';
+        if (msg === 'no-content') {
+          showNotify('Nem sikerült tartalmat generálni. Kérlek, pontosítsd a témát és próbáld újra.', 'warning', 6000);
+          userAborted = true;
+          throw e;
+        }
         if (msg.includes('HTTP 401') || msg.toLowerCase().includes('api key')) {
           showNotify('Adj meg Groq API-kulcsot (BYOK) a generáláshoz.', 'warning');
           openByok();
@@ -802,7 +820,9 @@ async function generate() {
       await refreshQuota();
     } else {
       const msg = (e && e.message) ? e.message : '';
-      if (msg.includes('HTTP 429')) {
+      if (msg === 'no-content') {
+        showNotify('Nem sikerült fejezeteket összeállítani. Kérlek, pontosítsd a témát és próbáld újra.', 'warning', 6000);
+      } else if (msg.includes('HTTP 429')) {
         const low = msg.toLowerCase();
         const isTPD = low.includes('tokens per day') || low.includes('tpd') || low.includes('rate_limit_exceeded');
         if (isTPD) {
