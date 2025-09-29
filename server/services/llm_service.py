@@ -20,6 +20,7 @@ SYSTEM_STRUCTURE = (
 logger = logging.getLogger(__name__)
 SECTION_PACING_S = float(os.getenv("SECTION_PACING_S", "0"))  # optional pacing between sections
 MAX_SECTIONS = int(os.getenv("MAX_SECTIONS", "25") or 25)
+MIN_SECTIONS = int(os.getenv("MIN_SECTIONS", "10") or 10)
 
 
 def _language_instruction(language: str) -> str:
@@ -108,6 +109,39 @@ def _strip_intro_conclusion(sections: Dict[str, Any], include_intro: bool, inclu
                 out[k] = v
         return out
 
+
+def _ensure_min_leaves(sections: Dict[str, Any], min_leaves: int, subject: str) -> Dict[str, Any]:
+    """If the outline has fewer than min_leaves leaves, return a simple fallback outline.
+    The fallback provides neutral, non-intro/non-conclusion topics to avoid being stripped.
+    """
+    try:
+        leaves = _flatten_structure(sections)
+    except Exception:
+        leaves = []
+    if len(leaves) >= max(1, int(min_leaves or 1)):
+        return sections
+    subj = (subject or "Téma").strip()
+    topics = [
+        "Alapfogalmak és háttér",
+        "Történeti háttér",
+        "Fő komponensek és felépítés",
+        "Működési elvek",
+        "Gyakorlati alkalmazások",
+        "Előnyök és kihívások",
+        "Módszerek és eszközök",
+        "Esettanulmányok",
+        "Trendek és jövőkép",
+        "Kitekintés",
+    ]
+    # Ensure we have at least min_leaves topics by repeating variants if necessary (cap by MAX_SECTIONS)
+    need = max(1, int(min_leaves or 1))
+    out: Dict[str, Any] = {}
+    i = 0
+    while i < need and i < MAX_SECTIONS:
+        label = topics[i % len(topics)]
+        out[f"Fejezet {i+1}"] = f"Részletes fejezet a(z) {subj} témában: {label}."
+        i += 1
+    return out
 
 def _limit_leaves(sections: Dict[str, Any], max_leaves: int) -> Dict[str, Any]:
     """Return a copy of sections limited to the first max_leaves leaves (depth-first order).
@@ -315,6 +349,12 @@ def generate_book_structure_service(subject: str, params: StructureParams, clien
     # Enforce maximum number of sections
     try:
         structure = _limit_leaves(structure, MAX_SECTIONS)
+    except Exception:
+        pass
+
+    # Ensure we don't end up with a degenerate 1-leaf outline; provide a minimal multi-chapter fallback
+    try:
+        structure = _ensure_min_leaves(structure, MIN_SECTIONS, subject)
     except Exception:
         pass
 

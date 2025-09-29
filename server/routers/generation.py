@@ -147,7 +147,23 @@ def generate_structure(req: StructureRequest, request: Request) -> StructureResp
             subj = (req.subject or "Téma").strip()
         except Exception:
             subj = "Téma"
-        structure = {f"Fejezet 1": f"Áttekintés a következő témáról: {subj}"}
+        # Provide a simple 10-chapter fallback so streaming has meaningful work
+        fallback: Dict[str, Any] = {}
+        topics = [
+            "Alapfogalmak és háttér",
+            "Történeti áttekintés",
+            "Fő komponensek és felépítés",
+            "Működési elvek",
+            "Gyakorlati alkalmazások",
+            "Előnyök és korlátok",
+            "Módszertanok és eszközök",
+            "Esettanulmányok",
+            "Jövőbeli irányok",
+            "Összefoglalás és kitekintés",
+        ]
+        for i, t in enumerate(topics, start=1):
+            fallback[f"Fejezet {i}"] = f"Részletes fejezet a(z) {subj} témában: {t}."
+        structure = fallback
 
     stats_schema = GenerationStatisticsSchema(**statistics)
     return StructureResponse(statistics=stats_schema, structure=structure)
