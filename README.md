@@ -8,7 +8,7 @@
 
 # HunBook – Ingyenes AI‑könyvíró (Groq + Llama3)
 
-HunBook egy modern, ingyenesen futtatható webalkalmazás, amely képes egyetlen témamegadással teljes könyvek vázlatát és fejezeteit legenerálni. A háttérben a Groq OpenAI‑kompatibilis modellek (pl. Llama3 OSS) dolgoznak, a frontenden pedig egy gyors, letisztult Vite alapú UI biztosítja a valós idejű streamelést és letöltést (TXT/PDF).
+HunBook egy modern, ingyenesen futtatható webalkalmazás, amely képes egyetlen témamegadással teljes könyvek vázlatát és fejezeteit legenerálni. A háttérben OpenAI modellek dolgoznak, a frontenden pedig egy gyors, letisztult Vite alapú UI biztosítja a valós idejű streamelést és letöltést (TXT/PDF).
 
 <p align="center">
   <img src="web/public/hunbook.png" alt="HunBook" width="460" />
@@ -41,7 +41,7 @@ A HunBook célja, hogy nonprofit módon, lokálisan is könnyen futtathatóan bi
 ## Fő funkciók
 
 - **[BYOK (Bring Your Own Key)]**: saját Groq API‑kulcs használata kliensoldali tárolással.
-- **[Resumable streaming]**: hálózati szakadás esetén automatikus újrapróbálkozás és folytatás.
+- **[Resumable streaming]**: hálózati probléma esetén automatikus újrapróbálkozás és folytatás.
 - **[Üveg (glass) overlay]**: hosszabb műveletek (vázlat/ export) alatt egyértelmű visszajelzés.
 - **[Kvóta + TPD]**: napi kvótakezelés és TPD (Tokens per Day) üzenetek magyar nyelven.
 - **[Fejezetszám kontroll]**: maximum `MAX_SECTIONS=25`, minimum `MIN_SECTIONS` (pl. 10–15) fallback.
@@ -55,7 +55,7 @@ Források a kódban: `web/src/main.js`, `server/app.py`, `server/routers/generat
 
 - **Frontend**: Vite, Tailwind, Vanilla JS
 - **Backend**: FastAPI, Uvicorn
-- **LLM**: Groq OpenAI‑kompatibilis modellek (pl. `openai/gpt-oss-20b`, `openai/gpt-oss-120b`)
+- **LLM**: OpenAI modellek (pl. `openai/gpt-oss-20b`, `openai/gpt-oss-120b`)
 - **E2E tesztek**: Playwright
 - **Export**: WeasyPrint (PDF), fallback: `fpdf2`
 
@@ -63,12 +63,21 @@ Források a kódban: `web/src/main.js`, `server/app.py`, `server/routers/generat
 
 ```mermaid
 flowchart LR
-  A[Browser (Vite, web/src/main.js)] -- fetch /config,/quota,/structure,/sections/stream --> B[FastAPI (server/app.py)]
-  B -- LLM calls --> C[Groq API]
-  B -- Export --> D[TXT/PDF]
-  A -- BYOK (Authorization: Bearer) --> B
-  A -- Warmup /healthz --> B
-  B <---> E[(Quota Manager)]
+  A[Browser]
+  B[FastAPI]
+  C[LLM API]
+  D[TXT/PDF Export]
+  E[(Quota Manager)]
+
+  A -->|config, quota| B
+  A -->|structure| B
+  A -->|sections stream| B
+  A -->|healthz warmup| B
+  A -->|BYOK auth| B
+
+  B --> C
+  B --> D
+  B <--> E
 ```
 
 ---
@@ -140,7 +149,7 @@ npm run dev  # http://localhost:5173
 
 Tippek:
 - Üres/gyenge outline esetén a szerver többfejezetes fallbacket ad.
-- Hálózati szakadásnál automatikus újrapróbálkozás történik.
+- Hálózati problémánál automatikus újrapróbálkozás történik.
 
 ---
 
