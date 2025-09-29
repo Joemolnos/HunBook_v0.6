@@ -20,7 +20,7 @@ SYSTEM_STRUCTURE = (
 logger = logging.getLogger(__name__)
 SECTION_PACING_S = float(os.getenv("SECTION_PACING_S", "0"))  # optional pacing between sections
 MAX_SECTIONS = int(os.getenv("MAX_SECTIONS", "25") or 25)
-MIN_SECTIONS = int(os.getenv("MIN_SECTIONS", "10") or 10)
+MIN_SECTIONS = int(os.getenv("MIN_SECTIONS", "15") or 15)
 
 
 def _language_instruction(language: str) -> str:
