@@ -17,15 +17,18 @@ def create_pdf_file(content: str) -> BytesIO:
         <head>
             <style>
                 @page {{ margin: 2cm; }}
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; font-size: 12pt; }}
-                h1, h2, h3, h4, h5, h6 {{ color: #333366; margin-top: 1em; margin-bottom: 0.5em; }}
-                p {{ margin-bottom: 0.5em; }}
-                code {{ background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }}
-                pre {{ background-color: #f4f4f4; padding: 1em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }}
-                blockquote {{ border-left: 4px solid #ccc; padding-left: 1em; margin-left: 0; font-style: italic; }}
-                table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; }}
-                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; font-size: 12pt; color: #111; }}
+                h1, h2, h3, h4, h5, h6 {{ color: #333366; margin-top: 1em; margin-bottom: 0.5em; page-break-after: avoid; page-break-inside: avoid; }}
+                p {{ margin-bottom: 0.6em; }}
+                ul, ol {{ margin: 0 0 0.6em 1.2em; }}
+                code {{ background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; word-break: break-word; }}
+                pre {{ background-color: #f4f4f4; padding: 1em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }}
+                blockquote {{ border-left: 4px solid #ccc; padding-left: 1em; margin-left: 0; font-style: italic; color: #444; }}
+                table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; table-layout: fixed; }}
+                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }}
                 th {{ background-color: #f2f2f2; }}
+                thead, tbody, tr, td, th {{ page-break-inside: avoid; }}
+                .codehilite {{ background: #f7f7f7; padding: 0.4em; border-radius: 6px; }}
             </style>
         </head>
         <body>

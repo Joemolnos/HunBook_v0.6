@@ -1152,7 +1152,20 @@ configPromise = loadConfig();
 if (notify) {
   notify.addEventListener('click', hideNotify);
 }
-refreshQuota();
+// Startup splash: warm up API and load initial config/quota with a friendly message
+(async () => {
+  try {
+    showGlass(
+      'HunBook indítása… Ingyenes, kísérleti projekt: a megadott témából és paraméterekből nonfikciós könyvet készít. ' +
+      'Folyamatos fejlesztés alatt áll; a fikciós műfaj támogatása később érkezik. Erőforrások ébresztése folyamatban…'
+    );
+    await warmupApi(5);
+    try { await configPromise; } catch {}
+    await refreshQuota();
+  } finally {
+    hideGlass();
+  }
+})();
 
 downloadPdf.addEventListener('click', async () => {
   try {

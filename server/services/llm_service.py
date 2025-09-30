@@ -14,7 +14,8 @@ SYSTEM_STRUCTURE = (
     "Write in JSON format only. Keys are section titles, values are either descriptions (string) "
     "or nested objects for subsections. Ensure a coherent, logically ordered outline strictly relevant to the given subject. "
     "Avoid unrelated tangents, duplication across sections, and redundant scope. Maintain consistent terminology throughout. "
-    "Do not include any introduction/foreword/author's note/summary unless explicitly requested."
+    "Do not include any introduction/foreword/author's note/summary unless explicitly requested. "
+    "Leaf values (descriptions) must be plain text strings of 1–2 sentences without markdown, lists or tables."
 )
 
 logger = logging.getLogger(__name__)
@@ -406,6 +407,10 @@ def iter_sections_stream(
             "Maintain strong cohesion with the overall outline and adjacent chapters. Use consistent terminology, avoid redundancy, "
             "and do not introduce unrelated topics beyond the outline. Explicitly stay on-topic relative to the section description and the outline. "
             "Cross-reference other sections when appropriate. "
+            "Format strictly in valid Markdown (no raw HTML). Start with a single H1 heading of the exact section title, then use H2/H3 as needed; "
+            "avoid going deeper than H3. Prefer paragraphs and bullet lists. Only include tables when they add clear value; tables must have a single "
+            "header row and consistent column counts in every row, using GitHub-style pipes. Avoid malformed tables and unclosed code fences. "
+            "Do not include implementation notes or meta-instructions in the output. At the end, ensure the Markdown is syntactically valid. "
             f"{lang_instr} {style_instr} {len_instr}"
         ).strip()
 
@@ -413,6 +418,12 @@ def iter_sections_stream(
             f"Global Outline (compact):\n{outline_summary}\n\n",
             f"Adjacent Context:\n{prev_ctx}{next_ctx}\n",
             "Guidance: Ensure all content directly supports the section_title and remains consistent with the outline. Avoid tangents.\n\n",
+            "Formatting rules (strict):\n"
+            "- Start with '# ' + section_title, then use '##'/'###' as needed.\n"
+            "- Use bullet lists '-' or numbered lists '1.'; maximum nested depth: 2.\n"
+            "- If using tables: include a header row, consistent column counts, pipe '|' separators; no empty trailing pipes.\n"
+            "- No raw HTML; no unclosed code fences; keep content as Markdown only.\n"
+            "- Do not output meta-comments, only the chapter content.\n\n",
         ]
         if extra_txt:
             parts.append(f"Additional user instructions (optional):\n{extra_txt}\n\n")
