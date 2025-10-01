@@ -6,7 +6,7 @@
 ![Playwright](https://img.shields.io/badge/Playwright-E2E-45ba4b?logo=playwright&logoColor=white)
 ![Groq](https://img.shields.io/badge/LLM-Groq-black)
 
-# HunBook – Ingyenes AI‑könyvíró (Groq + Llama3)
+# HunBook – Ingyenes AI‑könyvíró
 
 HunBook egy modern, ingyenesen futtatható webalkalmazás, amely képes egyetlen témamegadással teljes könyvek vázlatát és fejezeteit legenerálni. A háttérben OpenAI modellek dolgoznak, a frontenden pedig egy gyors, letisztult Vite alapú UI biztosítja a valós idejű streamelést és letöltést (TXT/PDF).
 
