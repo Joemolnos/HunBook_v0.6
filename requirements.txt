@@ -1,10 +1,11 @@
 # Core web framework
-fastapi==0.118.3
-uvicorn==0.37.0
-starlette==0.48.0
+fastapi==0.136.1
+uvicorn==0.46.0
+starlette==1.0.0
 
 # LLM and AI
 groq==0.32.0
+mcp>=1.0.0
 
 # Data processing
 pandas==2.3.3

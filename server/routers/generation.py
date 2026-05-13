@@ -13,8 +13,10 @@ from ..schemas import (
     StructureResponse,
     SectionsStreamRequest,
     ExportRequest,
+    MCPToolsRequest,
 )
 from ..services.llm_service import generate_book_structure_service, iter_sections_stream
+from ..services.mcp_service import list_mcp_tools
 from ..quota import get_quota_manager, account_id_from_token
 from exporting import create_markdown_file, create_pdf_file
 from config import groq_client, REQUIRE_BYOK
@@ -109,6 +111,7 @@ async def generate_structure(
             req.subject,
             req.params,
             client=client,
+            mcp_config=req.mcp,
         )
         
         return StructureResponse(
@@ -150,6 +153,7 @@ async def stream_sections(
                 client=client,
                 start_index=req.start_index or 0,
                 count=req.count,
+                mcp_config=req.mcp,
             )
             
             for event in iterator:
@@ -176,6 +180,17 @@ async def stream_sections(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/api/mcp/tools")
+async def get_mcp_tools(req: MCPToolsRequest):
+    """Probe a remote MCP server and return its available tool names."""
+    try:
+        tools = await asyncio.to_thread(list_mcp_tools, req.server_url, req.auth_token)
+        return {"tools": tools}
+    except Exception as exc:
+        logger.error("MCP tools probe failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=502, detail=f"Could not reach MCP server: {exc}")
 
 
 @router.post("/api/export/markdown")
