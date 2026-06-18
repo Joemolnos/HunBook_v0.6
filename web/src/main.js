@@ -1,6 +1,10 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 import './style.css';
+import { marked } from 'marked';
+
+// Configure marked for clean output
+marked.setOptions({ gfm: true, breaks: false });
 
 // Elements
 const subjectEl = document.getElementById('subject');
@@ -79,7 +83,92 @@ const contactSubmit = document.getElementById('contactSubmit');
 const contactTargetLink = contactModal ? contactModal.querySelector('a[href^="mailto:"]') : null;
 
 // Advanced controls
-let selectedModel = 'openai/gpt-oss-20b';
+// ── Model catalogue (Groq free tier rate limits) ─────────────────────────────
+// tpm = tokens per minute, rpd = requests per day, safeMaxTokens = recommended
+// max_tokens cap so a single call doesn't eat the full per-minute budget.
+// safeMaxTokens = maximum output tokens per section for this model.
+// A TPM-aware throttler on the backend automatically waits between sections
+// if the per-minute budget would be exceeded — so we can push these values
+// to the model's practical maximum without manual pacing.
+const MODEL_CATALOG = [
+  {
+    id: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    label: 'Llama 4 Scout',
+    badge: '30K TPM',
+    badgeClass: 'bg-emerald-900/60 text-emerald-300',
+    note: '30K TPM · 500K TPD — ajánlott · leghosszabb fejezetek · automatikus TPM várakozás',
+    safeMaxTokens: 7000,   // 30K TPM ÷ ~4 sections/min → 7000 out + ~800 in = fine
+    default: true,
+  },
+  {
+    id: 'llama-3.3-70b-versatile',
+    label: 'Llama 3.3 70B',
+    badge: '12K TPM',
+    badgeClass: 'bg-sky-900/60 text-sky-300',
+    note: '12K TPM · 100K TPD — kiváló minőség · ~2 fejezet/perc',
+    safeMaxTokens: 5000,
+  },
+  {
+    id: 'openai/gpt-oss-120b',
+    label: 'GPT-OSS 120B',
+    badge: '8K TPM',
+    badgeClass: 'bg-violet-900/60 text-violet-300',
+    note: '8K TPM · 200K TPD — legjobb minőség · lassabb · ~1 fejezet/perc',
+    safeMaxTokens: 3000,
+  },
+  {
+    id: 'openai/gpt-oss-20b',
+    label: 'GPT-OSS 20B',
+    badge: '8K TPM',
+    badgeClass: 'bg-violet-900/60 text-violet-300',
+    note: '8K TPM · 200K TPD — gyors GPT-OSS · ~1–2 fejezet/perc',
+    safeMaxTokens: 3000,
+  },
+  {
+    id: 'qwen/qwen3-32b',
+    label: 'Qwen 3 32B',
+    badge: '6K TPM',
+    badgeClass: 'bg-amber-900/60 text-amber-300',
+    note: '6K TPM · 500K TPD — nagy napi kvóta · ~1 fejezet/perc',
+    safeMaxTokens: 2500,
+  },
+  {
+    id: 'llama-3.1-8b-instant',
+    label: 'Llama 3.1 8B',
+    badge: '6K TPM',
+    badgeClass: 'bg-zinc-700 text-zinc-300',
+    note: '6K TPM · 500K TPD · 14.4K RPD — leggyorsabb · rövid tartalmakhoz',
+    safeMaxTokens: 2500,
+  },
+];
+
+let selectedModel = MODEL_CATALOG.find(m => m.default)?.id ?? 'meta-llama/llama-4-scout-17b-16e-instruct';
+
+// Build model pills dynamically
+(function buildModelPills() {
+  const container = document.getElementById('modelPills');
+  const noteEl = document.getElementById('modelRateNote');
+  if (!container) return;
+
+  MODEL_CATALOG.forEach(m => {
+    const btn = document.createElement('button');
+    btn.dataset.model = m.id;
+    btn.className = 'pill flex items-center gap-1.5' + (m.id === selectedModel ? ' pill-active' : '');
+    btn.innerHTML = `${m.label} <span class="px-1.5 py-0.5 rounded-full text-[9px] font-medium ${m.badgeClass}">${m.badge}</span>`;
+    btn.addEventListener('click', () => {
+      container.querySelectorAll('[data-model]').forEach(b => b.classList.remove('pill-active'));
+      btn.classList.add('pill-active');
+      selectedModel = m.id;
+      if (noteEl) noteEl.textContent = m.note;
+    });
+    container.appendChild(btn);
+  });
+
+  // Show note for default model
+  const def = MODEL_CATALOG.find(m => m.id === selectedModel);
+  if (noteEl && def) noteEl.textContent = def.note;
+})();
+// ─────────────────────────────────────────────────────────────────────────────
 let selectedStyle = 'akadémikus';
 let selectedLevel = 'általános';
 const temperatureEl = document.getElementById('temperature');
@@ -88,6 +177,125 @@ const topPEl = document.getElementById('topP');
 const topPVal = document.getElementById('topPVal');
 const targetLenEl = document.getElementById('targetLength');
 const targetLenVal = document.getElementById('targetLengthVal');
+const numChaptersEl = document.getElementById('numChapters');
+const numChaptersVal = document.getElementById('numChaptersVal');
+
+// MCP multi-server elements
+const mcpAddServer = document.getElementById('mcpAddServer');
+const mcpServerList = document.getElementById('mcpServerList');
+const mcpPresetList = document.getElementById('mcpPresetList');
+
+// ── MCP Preset catalogue ─────────────────────────────────────────────────────
+const MCP_PRESETS = [
+  {
+    name: 'Context7',
+    icon: '📚',
+    tag: 'Ingyenes · Nincs auth',
+    tagClass: 'bg-emerald-900/50 text-emerald-300',
+    desc: 'Programozási könyvtárak és framework-ök naprakész dokumentációja. Technikai könyvekhez ideális.',
+    url: 'https://mcp.context7.com/mcp',
+    auth: false,
+    auth_hint: null,
+    use_case: 'Technikai · Fejlesztői témák',
+  },
+  {
+    name: 'DeepWiki',
+    icon: '🔬',
+    tag: 'Ingyenes · Nincs auth',
+    tagClass: 'bg-emerald-900/50 text-emerald-300',
+    desc: 'Bármely GitHub repozitórium AI-alapú tudásbázisa. Nyílt forráskódú projektek könyveinek ideális forrása.',
+    url: 'https://mcp.deepwiki.com/mcp',
+    auth: false,
+    auth_hint: null,
+    use_case: 'Open source · GitHub projektek',
+  },
+  {
+    name: 'Wikipedia MCP',
+    icon: '📖',
+    tag: 'Ingyenes · Nincs auth',
+    tagClass: 'bg-emerald-900/50 text-emerald-300',
+    desc: 'Wikipedia cikkek, összefoglalók, szekciók és hivatkozások lekérése. 50+ nyelv támogatott — köztük magyar (hu). Enciklopédikus háttérhez ideális.',
+    url: 'https://wikipedia-mcp-zeta.vercel.app/mcp',
+    auth: false,
+    auth_hint: null,
+    use_case: 'Általános · Magyar tartalom is',
+  },
+  {
+    name: 'Tavily Search',
+    icon: '🌐',
+    tag: 'Ingyenes tier · Bearer token',
+    tagClass: 'bg-amber-900/50 text-amber-300',
+    desc: 'AI-optimalizált hosztolt webes keresés. 1000 ingyenes kérés/hó. Auth: Authorization: Bearer <api_key>. Valós idejű tények és hírek könyvekbe ágyazásához.',
+    url: 'https://mcp.tavily.com/mcp/',
+    auth: true,
+    auth_hint: 'Ingyenes API kulcs (Bearer): https://app.tavily.com',
+    use_case: 'Általános · Aktuális tartalom',
+  },
+  {
+    name: 'CoinGecko',
+    icon: '💹',
+    tag: 'Ingyenes · Nincs auth',
+    tagClass: 'bg-emerald-900/50 text-emerald-300',
+    desc: 'Kriptovaluta piaci adatok és árfolyamok valós időben. Blockchain, DeFi, Web3 témájú könyvekhez.',
+    url: 'https://mcp.coingecko.com/mcp',
+    auth: false,
+    auth_hint: null,
+    use_case: 'Kripto · Pénzügy',
+  },
+  {
+    name: 'Zapier',
+    icon: '⚡',
+    tag: 'Ingyenes tier · API kulcs',
+    tagClass: 'bg-amber-900/50 text-amber-300',
+    desc: '8000+ alkalmazás automatizálása. Munkafolyamat-könyvekhez és üzleti témákhoz lehet hasznos.',
+    url: 'https://mcp.zapier.com/mcp',
+    auth: true,
+    auth_hint: 'API kulcs: https://zapier.com/mcp',
+    use_case: 'Automatizálás · Üzlet',
+  },
+];
+
+function renderMcpPresets() {
+  if (!mcpPresetList) return;
+  mcpPresetList.innerHTML = '';
+  MCP_PRESETS.forEach(preset => {
+    const card = document.createElement('div');
+    card.className = 'flex flex-col gap-1.5 p-2.5 rounded-md border border-zinc-700/50 bg-zinc-950/50 hover:border-zinc-600 transition-colors';
+    card.innerHTML = `
+      <div class="flex items-start justify-between gap-2">
+        <div class="flex items-center gap-1.5">
+          <span class="text-base leading-none">${preset.icon}</span>
+          <span class="text-xs font-medium text-zinc-200">${preset.name}</span>
+        </div>
+        <span class="px-1.5 py-0.5 rounded-full text-[10px] whitespace-nowrap ${preset.tagClass}">${preset.tag}</span>
+      </div>
+      <div class="text-[11px] text-zinc-400 leading-snug">${preset.desc}</div>
+      <div class="flex items-center justify-between gap-2 mt-0.5">
+        <span class="text-[10px] text-zinc-600">${preset.use_case}</span>
+        <button class="preset-add px-2 py-1 rounded text-[11px] bg-indigo-700 hover:bg-indigo-600 text-white whitespace-nowrap">+ Hozzáadás</button>
+      </div>
+      ${preset.auth_hint ? `<div class="text-[10px] text-zinc-500 mt-0.5">🔑 ${preset.auth_hint}</div>` : ''}
+    `;
+    card.querySelector('.preset-add').addEventListener('click', () => {
+      const row = createMcpRow();
+      row.querySelector('.mcp-url').value = preset.url;
+      if (preset.auth_hint) {
+        row.querySelector('.mcp-status').textContent = `🔑 ${preset.auth_hint}`;
+      }
+      if (mcpServerList) mcpServerList.appendChild(row);
+      saveMcpServers();
+      // Auto-scroll to new row
+      row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      // Close preset panel
+      const details = document.getElementById('mcpPresetDetails');
+      if (details) details.open = false;
+    });
+    mcpPresetList.appendChild(card);
+  });
+}
+
+renderMcpPresets();
+// ─────────────────────────────────────────────────────────────────────────────
 
 // State
 let accumulatingContent = '';
@@ -98,7 +306,7 @@ let totalSections = 0;
 let completedSections = 0;
 const sectionStatusEls = new Map(); // title -> {container, statusEl, spinnerEl}
 let userAborted = false;
-const MAX_SECTIONS = 25; // hard cap on chapter count
+const MAX_SECTIONS = 50; // dynamic cap — user controls via numChapters slider
 
 function setSectionWait(title, seconds, message) {
   ensureSectionContainer(title);
@@ -107,11 +315,18 @@ function setSectionWait(title, seconds, message) {
   const { statusEl, spinnerEl } = refs;
   spinnerEl.classList.remove('hidden');
   spinnerEl.classList.add('animate-spin');
-  const s = Number(seconds || 0).toFixed(1);
-  statusEl.textContent = `Várakozás ${s}s (limit)`;
-  statusEl.className = 'status-text text-xs text-yellow-400';
-  if (message && typeof message === 'string' && message.toLowerCase().includes('429')) {
-    showNotify('Átmeneti limit. Rövid várakozás…', 'warning', 2000);
+  const s = Number(seconds || 0).toFixed(0);
+  const isTpm = message && message.toLowerCase().includes('tpm');
+  const label = isTpm
+    ? `TPM limit — ${s}s pihenő (minőségi generálás)`
+    : `Várakozás ${s}s (limit)`;
+  statusEl.textContent = label;
+  statusEl.className = 'status-text text-xs text-amber-400';
+  const msg = message || '';
+  if (isTpm) {
+    showNotify(`TPM limit elérve — ${s}s várakozás a következő fejezet előtt`, 'info', Number(s) * 1000 + 500);
+  } else if (msg.toLowerCase().includes('429')) {
+    showNotify('Rate limit (429). Rövid várakozás…', 'warning', 3000);
   }
 }
 
@@ -280,6 +495,36 @@ function ensureSectionContainer(title) {
   return el;
 }
 
+// Throttled per-section render timers (title → timeoutId)
+const _renderTimers = new Map();
+
+function renderSectionContent(title, markdown, immediate = false) {
+  const refs = sectionStatusEls.get(title);
+  if (!refs) return;
+  const proseDiv = refs.container.querySelector('.prose');
+  if (!proseDiv) return;
+
+  const doRender = () => {
+    try {
+      proseDiv.innerHTML = marked.parse(markdown || '');
+      proseDiv.classList.remove('hidden');
+    } catch { /* ignore parse errors during streaming */ }
+  };
+
+  if (immediate) {
+    if (_renderTimers.has(title)) { clearTimeout(_renderTimers.get(title)); _renderTimers.delete(title); }
+    doRender();
+    return;
+  }
+  // Throttle: re-render at most every 600ms during streaming
+  if (!_renderTimers.has(title)) {
+    _renderTimers.set(title, setTimeout(() => {
+      _renderTimers.delete(title);
+      doRender();
+    }, 600));
+  }
+}
+
 function setSectionStatus(title, status) {
   ensureSectionContainer(title);
   const refs = sectionStatusEls.get(title);
@@ -398,19 +643,26 @@ function stopGlobalTimer() {
 async function warmupApi(maxAttempts = 3) {
   if (warmedUp) return true;
   for (let i = 0; i < maxAttempts; i++) {
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 3000); // 3s per attempt
     try {
       const r = await fetch(`${API_BASE}/healthz`, {
         method: 'GET',
         mode: 'cors',
         cache: 'no-store',
         credentials: 'omit',
+        signal: ac.signal,
       });
       if (r.ok) {
         warmedUp = true;
+        clearTimeout(tid);
         return true;
       }
-    } catch {}
-    // small backoff
+    } catch {
+      // ignore — either network error or aborted timeout
+    } finally {
+      clearTimeout(tid);
+    }
     await new Promise(res => setTimeout(res, 400 * (i + 1)));
   }
   return warmedUp;
@@ -544,19 +796,25 @@ async function generate() {
     }
     // 1) Structure
     const extraTxt = collectExtraInstructions();
+    const mcpCfg = collectMcpConfig();
+    const activeModelCfg = MODEL_CATALOG.find(m => m.id === selectedModel);
+    const safeMaxTokens = activeModelCfg?.safeMaxTokens ?? 2048;
+
     const structureReq = {
       subject,
       params: {
         model: selectedModel,
         temperature: Number(temperatureEl.value),
         top_p: Number(topPEl.value),
-        max_tokens: 8000,
+        max_tokens: safeMaxTokens,
         language: 'hu',
         include_intro: false,
         include_conclusion: false,
         depth: 2,
+        num_chapters: numChaptersEl ? Number(numChaptersEl.value) : 15,
         extra_instructions: extraTxt || undefined,
       },
+      ...(mcpCfg ? { mcp: mcpCfg } : {}),
     };
     const structureRes = await postJSON('/api/structure', structureReq, controller.signal).then(r => r.json());
     // Quota consumed server-side at structure start; refresh UI
@@ -564,9 +822,11 @@ async function generate() {
 
     // Flatten and render skeletons (titles only)
     let leaves = flattenStructure(structureRes.structure);
-    if (leaves.length > MAX_SECTIONS) {
-      leaves = leaves.slice(0, MAX_SECTIONS);
-      showNotify(`A fejezetek száma ${MAX_SECTIONS}-re korlátozva.`, 'info', 4000);
+    const userMaxChapters = numChaptersEl ? Number(numChaptersEl.value) + 5 : MAX_SECTIONS;
+    const effectiveMax = Math.min(MAX_SECTIONS, userMaxChapters);
+    if (leaves.length > effectiveMax) {
+      leaves = leaves.slice(0, effectiveMax);
+      showNotify(`A fejezetek száma ${effectiveMax}-re korlátozva.`, 'info', 4000);
     }
     if (leaves.length === 0) {
       // Abort early: avoid streaming "done" without content
@@ -598,7 +858,7 @@ async function generate() {
         model: selectedModel,
         temperature: Number(temperatureEl.value),
         top_p: Number(topPEl.value),
-        max_tokens: 8000,
+        max_tokens: safeMaxTokens,
         language: 'hu',
         style: selectedStyle,
         reading_level: selectedLevel,
@@ -606,6 +866,7 @@ async function generate() {
         parallelism: 1,
         extra_instructions: extraTxt || undefined,
       },
+      ...(mcpCfg ? { mcp: mcpCfg } : {}),
     };
 
     // Disable downloads during streaming
@@ -685,12 +946,16 @@ async function generate() {
                   setSectionStatus(ev.title, 'in_progress');
                 } else if (ev.type === 'token') {
                   const curr = sectionBuffers.get(ev.title) || '';
-                  sectionBuffers.set(ev.title, curr + ev.delta);
+                  const next = curr + ev.delta;
+                  sectionBuffers.set(ev.title, next);
+                  renderSectionContent(ev.title, next);
                 } else if (ev.type === 'stats') {
                   updateStatsFromEvent(ev);
                 } else if (ev.type === 'rate_limit_wait') {
                   setSectionWait(ev.title, ev.wait, ev.message);
                 } else if (ev.type === 'section_end') {
+                  // Final render: complete markdown, immediate (no throttle)
+                  renderSectionContent(ev.title, sectionBuffers.get(ev.title) || '', true);
                   setSectionStatus(ev.title, 'done');
                   completedSections += 1;
                   updateProgress();
@@ -700,10 +965,12 @@ async function generate() {
                     throw new Error('no-content');
                   }
                   finishedNormally = true;
-                  // Build accumulatingContent
+                  // Build accumulatingContent — don't add # prefix if LLM already starts with H1
                   accumulatingContent = '';
                   for (const [title, txt] of sectionBuffers.entries()) {
-                    accumulatingContent += `# ${title}\n\n${txt}\n\n`;
+                    const body = (txt || '').trimStart();
+                    const hasH1 = /^#{1,2}\s/.test(body);
+                    accumulatingContent += hasH1 ? `${body}\n\n` : `# ${title}\n\n${body}\n\n`;
                   }
                   // Force-complete any sections not explicitly closed
                   for (const [title, refs] of sectionStatusEls.entries()) {
@@ -963,13 +1230,7 @@ if (byokClear) byokClear.addEventListener('click', () => {
   refreshQuota();
 });
 
-Array.from(document.querySelectorAll('[data-model]')).forEach(btn => {
-  btn.addEventListener('click', () => {
-    const group = document.querySelectorAll('[data-model]');
-    setActive(group, btn);
-    selectedModel = btn.getAttribute('data-model');
-  });
-});
+// Model pill click handling is done in buildModelPills() above.
 
 Array.from(document.querySelectorAll('[data-style]')).forEach(btn => {
   btn.addEventListener('click', () => {
@@ -996,6 +1257,191 @@ function bindRange(input, out) {
 bindRange(temperatureEl, temperatureVal);
 bindRange(topPEl, topPVal);
 bindRange(targetLenEl, targetLenVal);
+if (numChaptersEl && numChaptersVal) bindRange(numChaptersEl, numChaptersVal);
+
+// ── MCP multi-server panel ───────────────────────────────────────────────────
+let mcpRowId = 0;
+
+function createMcpRow() {
+  const id = ++mcpRowId;
+  const row = document.createElement('div');
+  row.className = 'mcp-row bg-zinc-900/50 border border-zinc-700 rounded-md p-3 space-y-2';
+  row.dataset.rowId = id;
+  row.innerHTML = `
+    <div class="flex items-center justify-between gap-2">
+      <label class="flex items-center gap-2 cursor-pointer text-xs text-zinc-400">
+        <input type="checkbox" class="mcp-enabled accent-indigo-600" checked />
+        Engedélyezve
+      </label>
+      <span class="px-2 py-0.5 rounded-full bg-indigo-900/50 text-indigo-300 text-[10px] font-medium tracking-wide">⚡ Auto eszköz</span>
+      <button class="mcp-remove px-2 py-0.5 rounded text-xs text-zinc-400 hover:text-red-400">✕ Törlés</button>
+    </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+      <div>
+        <label class="block text-xs mb-1 text-zinc-500">MCP szerver URL</label>
+        <div class="flex gap-1">
+          <input type="url" class="mcp-url flex-1 rounded-md bg-zinc-950 border border-zinc-800 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="https://mcp.context7.com/mcp" />
+          <button class="mcp-fetch px-2 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs whitespace-nowrap">Tesztelés</button>
+        </div>
+      </div>
+      <div>
+        <label class="block text-xs mb-1 text-zinc-500">Auth token (opcionális)</label>
+        <input type="password" class="mcp-token w-full rounded-md bg-zinc-950 border border-zinc-800 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-600" placeholder="Bearer …" />
+      </div>
+    </div>
+    <div class="grid grid-cols-1 gap-2">
+      <div>
+        <label class="block text-xs mb-1 text-zinc-500">Max találat: <span class="mcp-max-val">3</span></label>
+        <input type="range" class="mcp-max range" min="1" max="10" step="1" value="3" />
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-4">
+      <label class="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer">
+        <input type="checkbox" class="mcp-pre accent-indigo-600" checked /> Struktúra előtt
+      </label>
+      <label class="flex items-center gap-1.5 text-xs text-zinc-400 cursor-pointer">
+        <input type="checkbox" class="mcp-per accent-indigo-600" checked /> Fejezetenként
+      </label>
+    </div>
+    <div class="mcp-tools-preview hidden flex flex-wrap gap-1 mt-1"></div>
+    <div class="mcp-status text-xs text-zinc-500"></div>
+  `;
+
+  // Remove button
+  row.querySelector('.mcp-remove').addEventListener('click', () => row.remove());
+
+  // Max results slider label
+  const maxInput = row.querySelector('.mcp-max');
+  const maxVal = row.querySelector('.mcp-max-val');
+  maxInput.addEventListener('input', () => { maxVal.textContent = maxInput.value; });
+
+  // Test/probe button — lists available tools and shows them as info pills
+  row.querySelector('.mcp-fetch').addEventListener('click', async () => {
+    const urlEl = row.querySelector('.mcp-url');
+    const tokenEl = row.querySelector('.mcp-token');
+    const statusEl = row.querySelector('.mcp-status');
+    const previewEl = row.querySelector('.mcp-tools-preview');
+    const fetchBtn = row.querySelector('.mcp-fetch');
+    const url = urlEl.value.trim();
+    if (!url) { statusEl.textContent = 'Adj meg egy URL-t.'; return; }
+    statusEl.textContent = 'Eszközök lekérése…';
+    fetchBtn.disabled = true;
+    try {
+      const body = { server_url: url };
+      const tok = tokenEl.value.trim();
+      if (tok) body.auth_token = tok;
+      const r = await fetch(`${API_BASE}/api/mcp/tools`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        credentials: 'omit',
+        mode: 'cors',
+      });
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const data = await r.json();
+      const tools = data.tools || [];
+      // Show discovered tools as read-only pills with descriptions as tooltips
+      previewEl.innerHTML = '';
+      tools.forEach(t => {
+        const pill = document.createElement('span');
+        pill.className = 'px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 text-[10px] cursor-default';
+        pill.textContent = t.name || t;
+        if (t.description) pill.title = t.description;
+        previewEl.appendChild(pill);
+      });
+      previewEl.classList.toggle('hidden', tools.length === 0);
+      statusEl.textContent = `${tools.length} eszköz elérhető — automatikusan kerül kiválasztásra.`;
+    } catch (err) {
+      statusEl.textContent = `Hiba: ${err.message}`;
+      previewEl.classList.add('hidden');
+    } finally {
+      fetchBtn.disabled = false;
+    }
+  });
+
+  return row;
+}
+
+if (mcpAddServer) {
+  mcpAddServer.addEventListener('click', () => {
+    if (mcpServerList) mcpServerList.appendChild(createMcpRow());
+  });
+}
+
+function collectMcpConfig() {
+  if (!mcpServerList) return null;
+  const configs = [];
+  mcpServerList.querySelectorAll('.mcp-row').forEach(row => {
+    const enabled = row.querySelector('.mcp-enabled')?.checked ?? false;
+    const url = row.querySelector('.mcp-url')?.value?.trim() || '';
+    if (!url) return;
+    configs.push({
+      enabled,
+      server_url: url,
+      auth_token: row.querySelector('.mcp-token')?.value?.trim() || null,
+      pre_structure: row.querySelector('.mcp-pre')?.checked ?? true,
+      per_section: row.querySelector('.mcp-per')?.checked ?? true,
+      max_results: Number(row.querySelector('.mcp-max')?.value || 3),
+    });
+  });
+  return configs.length > 0 ? configs : null;
+}
+
+// ── MCP config persistence ────────────────────────────────────────────────────
+const MCP_STORAGE_KEY = 'hunbook_mcp_servers';
+
+function saveMcpServers() {
+  try {
+    const configs = [];
+    mcpServerList?.querySelectorAll('.mcp-row').forEach(row => {
+      const url = row.querySelector('.mcp-url')?.value?.trim() || '';
+      if (!url) return;
+      configs.push({
+        enabled: row.querySelector('.mcp-enabled')?.checked ?? true,
+        server_url: url,
+        auth_token: row.querySelector('.mcp-token')?.value?.trim() || '',
+        pre_structure: row.querySelector('.mcp-pre')?.checked ?? true,
+        per_section: row.querySelector('.mcp-per')?.checked ?? true,
+        max_results: Number(row.querySelector('.mcp-max')?.value || 3),
+      });
+    });
+    localStorage.setItem(MCP_STORAGE_KEY, JSON.stringify(configs));
+  } catch {}
+}
+
+function loadMcpServers() {
+  try {
+    const raw = localStorage.getItem(MCP_STORAGE_KEY);
+    if (!raw) return;
+    const configs = JSON.parse(raw);
+    if (!Array.isArray(configs) || configs.length === 0) return;
+    configs.forEach(cfg => {
+      const row = createMcpRow();
+      if (cfg.server_url) row.querySelector('.mcp-url').value = cfg.server_url;
+      if (cfg.auth_token) row.querySelector('.mcp-token').value = cfg.auth_token;
+      row.querySelector('.mcp-enabled').checked = cfg.enabled !== false;
+      row.querySelector('.mcp-pre').checked = cfg.pre_structure !== false;
+      row.querySelector('.mcp-per').checked = cfg.per_section !== false;
+      const maxInput = row.querySelector('.mcp-max');
+      const maxVal = row.querySelector('.mcp-max-val');
+      maxInput.value = cfg.max_results ?? 3;
+      maxVal.textContent = maxInput.value;
+      mcpServerList?.appendChild(row);
+    });
+  } catch {}
+}
+
+// Auto-save whenever any input inside the MCP list changes
+mcpServerList?.addEventListener('input', saveMcpServers);
+mcpServerList?.addEventListener('change', saveMcpServers);
+// Also save when a row is removed (via event delegation)
+mcpServerList?.addEventListener('click', e => {
+  if (e.target.closest('.mcp-remove')) setTimeout(saveMcpServers, 50);
+});
+
+// Load saved servers on startup
+loadMcpServers();
+// ─────────────────────────────────────────────────────────────────────────────
 
 generateBtn.addEventListener('click', generate);
 
@@ -1114,12 +1560,12 @@ downloadTxt.addEventListener('click', async () => {
     showGlass('A könyv előkészítése exportálásra…');
     let payload = accumulatingContent;
     if (!payload) {
-      // Build from current buffers (partial download)
       let tmp = '';
       for (const [title, txt] of sectionBuffers.entries()) {
-        if (txt && txt.trim().length) {
-          tmp += `# ${title}\n\n${txt}\n\n`;
-        }
+        const body = (txt || '').trimStart();
+        if (!body.length) continue;
+        const hasH1 = /^#{1,2}\s/.test(body);
+        tmp += hasH1 ? `${body}\n\n` : `# ${title}\n\n${body}\n\n`;
       }
       payload = tmp;
     }
@@ -1154,15 +1600,18 @@ if (notify) {
 }
 // Startup splash: warm up API and load initial config/quota with a friendly message
 (async () => {
+  // Hard cap: glass never stays longer than 12s regardless of network state
+  const splashTimeout = setTimeout(() => hideGlass(), 12000);
   try {
     showGlass(
       'HunBook indítása… Ingyenes, kísérleti projekt: a megadott témából és paraméterekből nonfikciós könyvet készít. ' +
       'Folyamatos fejlesztés alatt áll; a fikciós műfaj támogatása később érkezik. Erőforrások ébresztése folyamatban…'
     );
-    await warmupApi(5);
+    await warmupApi(3);
     try { await configPromise; } catch {}
     await refreshQuota();
   } finally {
+    clearTimeout(splashTimeout);
     hideGlass();
   }
 })();
@@ -1174,9 +1623,10 @@ downloadPdf.addEventListener('click', async () => {
     if (!payload) {
       let tmp = '';
       for (const [title, txt] of sectionBuffers.entries()) {
-        if (txt && txt.trim().length) {
-          tmp += `# ${title}\n\n${txt}\n\n`;
-        }
+        const body = (txt || '').trimStart();
+        if (!body.length) continue;
+        const hasH1 = /^#{1,2}\s/.test(body);
+        tmp += hasH1 ? `${body}\n\n` : `# ${title}\n\n${body}\n\n`;
       }
       payload = tmp;
     }

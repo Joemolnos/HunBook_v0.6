@@ -1,6 +1,7 @@
+import re
 from io import BytesIO
-from markdown import markdown
-from weasyprint import HTML, CSS
+
+from fpdf import FPDF
 
 
 def create_markdown_file(content: str) -> BytesIO:
@@ -10,33 +11,52 @@ def create_markdown_file(content: str) -> BytesIO:
     return markdown_file
 
 
+def _strip_inline_md(text: str) -> str:
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'`(.+?)`', r'\1', text)
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+    return text
+
+
 def create_pdf_file(content: str) -> BytesIO:
-    html_content = markdown(content, extensions=['extra', 'codehilite'])
-    styled_html = f"""
-    <html>
-        <head>
-            <style>
-                @page {{ margin: 2cm; }}
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; font-size: 12pt; color: #111; }}
-                h1, h2, h3, h4, h5, h6 {{ color: #333366; margin-top: 1em; margin-bottom: 0.5em; page-break-after: avoid; page-break-inside: avoid; }}
-                p {{ margin-bottom: 0.6em; }}
-                ul, ol {{ margin: 0 0 0.6em 1.2em; }}
-                code {{ background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; word-break: break-word; }}
-                pre {{ background-color: #f4f4f4; padding: 1em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }}
-                blockquote {{ border-left: 4px solid #ccc; padding-left: 1em; margin-left: 0; font-style: italic; color: #444; }}
-                table {{ border-collapse: collapse; width: 100%; margin-bottom: 1em; table-layout: fixed; }}
-                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: anywhere; }}
-                th {{ background-color: #f2f2f2; }}
-                thead, tbody, tr, td, th {{ page-break-inside: avoid; }}
-                .codehilite {{ background: #f7f7f7; padding: 0.4em; border-radius: 6px; }}
-            </style>
-        </head>
-        <body>
-            {html_content}
-        </body>
-    </html>
-    """
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.set_margins(20, 20, 20)
+    pdf.add_page()
+
+    for line in content.splitlines():
+        stripped = line.rstrip()
+
+        if stripped.startswith('# '):
+            pdf.set_font('Helvetica', 'B', 18)
+            pdf.set_text_color(40, 40, 120)
+            pdf.multi_cell(0, 10, _strip_inline_md(stripped[2:]))
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(2)
+        elif stripped.startswith('## '):
+            pdf.set_font('Helvetica', 'B', 14)
+            pdf.set_text_color(40, 40, 120)
+            pdf.multi_cell(0, 8, _strip_inline_md(stripped[3:]))
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(1)
+        elif stripped.startswith('### '):
+            pdf.set_font('Helvetica', 'B', 12)
+            pdf.multi_cell(0, 7, _strip_inline_md(stripped[4:]))
+            pdf.ln(1)
+        elif stripped.startswith(('- ', '* ', '+ ')):
+            pdf.set_font('Helvetica', '', 11)
+            pdf.multi_cell(0, 6, f'  \u2022  {_strip_inline_md(stripped[2:])}')
+        elif re.match(r'^\d+\.\s', stripped):
+            pdf.set_font('Helvetica', '', 11)
+            pdf.multi_cell(0, 6, f'  {_strip_inline_md(stripped)}')
+        elif stripped == '':
+            pdf.ln(4)
+        else:
+            pdf.set_font('Helvetica', '', 11)
+            pdf.multi_cell(0, 6, _strip_inline_md(stripped))
+
     pdf_buffer = BytesIO()
-    HTML(string=styled_html).write_pdf(pdf_buffer)
+    pdf.output(pdf_buffer)
     pdf_buffer.seek(0)
     return pdf_buffer
